@@ -1,0 +1,417 @@
+"""
+AI content generation service using RAG.
+Arabic-first prompts, with structured JSON generation for questions, flashcards, quiz, and assistants.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from typing import List, Dict, Any, Optional
+
+from models.schemas import (
+    GenerateQuestionsRequest,
+    GeneratedQuestion,
+    QuestionOption,
+    FlashcardsRequest,
+    Flashcard,
+    AskAIRequest,
+    AskAIResponse,
+    GenerateQuizRequest,
+    QuizQuestion,
+    QuizOption,
+    AIAssistantRequest,
+)
+from models.enums import QuestionType, DifficultyLevel
+from services.rag_service import rag_service
+from services.embedding_service import embedding_service
+from services.conversation_service import conversation_service
+from utils.language_detector import language_detector
+
+logger = logging.getLogger(__name__)
+
+
+class QuestionService:
+    def __init__(self):
+        self.rag = rag_service
+
+    # --------------------------- helpers ---------------------------
+    def _safe_json(self, value: Any, default: Any):
+        if isinstance(value, (dict, list)):
+            return value
+        if not isinstance(value, str):
+            return default
+        cleaned = value.strip()
+        if cleaned.startswith("```json"):
+            cleaned = cleaned[7:]
+        if cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        try:
+            return json.loads(cleaned.strip())
+        except Exception:
+            return default
+
+    async def _structured(self, prompt: str, schema: dict, system_instruction: str = "", context=None):
+        return await self.rag.generate_structured_output(
+            prompt=prompt,
+            context=context or [],
+            output_schema=schema,
+            system_instruction=system_instruction,
+        )
+
+    def _build_context_query_from_description_context(self, context: Optional[Any], content_type: str, title: Optional[str] = None) -> str:
+        parts = [title or "", content_type]
+        if context:
+            data = context.model_dump() if hasattr(context, "model_dump") else context
+            for key in ("course", "module", "lesson", "quiz", "assignment", "extra"):
+                item = data.get(key) if isinstance(data, dict) else None
+                if isinstance(item, dict):
+                    parts.extend(str(v) for v in item.values() if v)
+        return " ".join([p for p in parts if p]) or content_type
+
+    def _extract_description_title(self, context: Optional[Any], content_type: str, title: Optional[str] = None) -> str:
+        if title:
+            return title
+        if not context:
+            return content_type
+        data = context.model_dump() if hasattr(context, "model_dump") else context
+        # Prefer the requested type, then lesson/module/course fallback.
+        for key in [content_type, "lesson", "module", "course", "quiz", "assignment"]:
+            item = data.get(key) if isinstance(data, dict) else None
+            if isinstance(item, dict) and item.get("title"):
+                return item["title"]
+        return content_type
+
+    # --------------------------- questions ---------------------------
+    async def generate_questions(self, request: GenerateQuestionsRequest) -> List[GeneratedQuestion]:
+        try:
+            search_query = self._build_search_query(request.metadata, request.prompt or "")
+            metadata_filter = {}
+            if request.metadata:
+                if request.metadata.subject and request.metadata.subject != "General":
+                    metadata_filter["subject"] = request.metadata.subject
+                if request.metadata.grade and request.metadata.grade != "General":
+                    metadata_filter["grade_level"] = request.metadata.grade
+                if request.metadata.semester:
+                    metadata_filter["semester"] = request.metadata.semester
+                if request.metadata.is_course_book:
+                    metadata_filter["is_course_book"] = True
+
+            context = await self.rag.retrieve_with_metadata(
+                query=search_query,
+                top_k=5,
+                metadata_filter=metadata_filter if metadata_filter else None,
+            )
+
+            is_arabic = language_detector.should_use_arabic(request.prompt or search_query)
+            system_instruction = self._build_system_instruction(request, is_arabic)
+            generation_prompt = self._build_generation_prompt(request, is_arabic)
+
+            raw_questions = await self.rag.generate_structured_output(
+                prompt=generation_prompt,
+                context=context,
+                output_schema=self._get_output_schema(request.type),
+                system_instruction=system_instruction,
+            )
+            questions = self._parse_questions(raw_questions, request)
+            return questions
+        except Exception as e:
+            logger.error(f"Question generation failed: {e}")
+            raise
+
+    def _build_search_query(self, metadata, prompt: str) -> str:
+        if not metadata:
+            return prompt or "general education"
+        parts = [metadata.course, metadata.module, metadata.title, metadata.description, metadata.subject, metadata.grade, prompt]
+        return " ".join(filter(None, parts)) or "general education"
+
+    def _build_system_instruction(self, request: GenerateQuestionsRequest, is_arabic: bool) -> str:
+        lang = "Arabic" if is_arabic else "English"
+        grade = request.metadata.grade if request.metadata else "General"
+        subject = request.metadata.subject if request.metadata else "General"
+        module = request.metadata.module if request.metadata else ""
+        return f"""You are an expert educational content creator specializing in {lang}.
+Generate high-quality questions based on the provided context.
+Requirements:
+- Generate in {lang}.
+- For MCQ: provide 4 options with exactly one correct answer.
+- For True/False: correctAnswer must be "true" or "false".
+- For Short Answer: correctAnswer should be a concise model answer.
+- Use difficulty: easy, medium, difficult.
+- Age-appropriate for: {grade}.
+- Subject: {subject}. Module: {module}.
+Return JSON only."""
+
+    def _build_generation_prompt(self, request: GenerateQuestionsRequest, is_arabic: bool) -> str:
+        if is_arabic:
+            prompt = f"أنشئ {request.questionsNumber} سؤال/أسئلة تعليمية."
+            prompt += f"\nنوع الأسئلة: {request.type.value}. مستوى الصعوبة: {request.difficulty.value}."
+            prompt += f"\nالتعليمات الإضافية: {request.prompt or ''}"
+            if request.metadata:
+                prompt += f"\nالمادة: {request.metadata.subject}\nالصف: {request.metadata.grade}\nالكورس: {request.metadata.course}\nالوحدة: {request.metadata.module}\nالعنوان: {request.metadata.title}\nالوصف: {request.metadata.description}"
+        else:
+            prompt = f"Generate {request.questionsNumber} educational questions."
+            prompt += f"\nQuestion type: {request.type.value}. Difficulty: {request.difficulty.value}."
+            prompt += f"\nExtra instructions: {request.prompt or ''}"
+        return prompt
+
+    def _get_output_schema(self, question_type: QuestionType) -> dict:
+        return {
+            "type": "array",
+            "items": {
+                "id": "string",
+                "order": "number",
+                "question": "string",
+                "marks": "number",
+                "type": "mcq|true_false|short_answer",
+                "options": [{"id": "string", "label": "string", "isCorrect": "boolean"}],
+                "difficulty": "easy|medium|difficult",
+                "correctAnswer": "string"
+            }
+        }
+
+    def _parse_questions(self, raw_questions: Any, request: GenerateQuestionsRequest) -> List[GeneratedQuestion]:
+        raw_questions = self._safe_json(raw_questions, [])
+        if isinstance(raw_questions, dict):
+            if "questions" in raw_questions:
+                raw_questions = raw_questions["questions"]
+            elif "items" in raw_questions:
+                raw_questions = raw_questions["items"]
+            else:
+                # Find the first list value in the dictionary
+                for val in raw_questions.values():
+                    if isinstance(val, list):
+                        raw_questions = val
+                        break
+                else:
+                    raw_questions = []
+        questions = []
+        for idx, q_data in enumerate((raw_questions or [])[:request.questionsNumber], 1):
+            try:
+                q_type = q_data.get("type", request.type.value)
+                if request.type != QuestionType.MIX:
+                    q_type = request.type.value
+                if q_type not in [t.value for t in QuestionType if t != QuestionType.MIX]:
+                    q_type = QuestionType.MCQ.value
+
+                diff = q_data.get("difficulty", request.difficulty.value)
+                if diff == "hard":
+                    diff = "difficult"
+                if diff not in [d.value for d in DifficultyLevel if d != DifficultyLevel.MIX]:
+                    diff = DifficultyLevel.MEDIUM.value
+
+                options = None
+                if q_type == QuestionType.MCQ.value:
+                    raw_opts = q_data.get("options", []) or []
+                    options = [QuestionOption(**opt) for opt in raw_opts if isinstance(opt, dict)]
+                    options = self._ensure_options(options)
+                    correct_answer = q_data.get("correctAnswer") or next((o.id for o in options if o.isCorrect), options[0].id)
+                elif q_type == QuestionType.TRUE_FALSE.value:
+                    correct_answer = str(q_data.get("correctAnswer", "true")).lower()
+                    if correct_answer not in {"true", "false"}:
+                        correct_answer = "true"
+                else:
+                    correct_answer = q_data.get("correctAnswer", "")
+
+                questions.append(GeneratedQuestion(
+                    id=str(q_data.get("id", idx)),
+                    order=idx,
+                    question=q_data.get("question", ""),
+                    marks=int(q_data.get("marks", 2) or 2),
+                    type=QuestionType(q_type),
+                    options=options,
+                    difficulty=DifficultyLevel(diff),
+                    correctAnswer=correct_answer,
+                ))
+            except Exception as e:
+                logger.warning(f"Failed to parse question {idx}: {e}")
+        return questions
+
+    def _ensure_options(self, existing: List[QuestionOption]) -> List[QuestionOption]:
+        if not existing:
+            existing = [QuestionOption(id="o1", label="الخيار الصحيح", isCorrect=True)]
+        has_correct = any(o.isCorrect for o in existing)
+        if not has_correct:
+            existing[0].isCorrect = True
+        while len(existing) < 4:
+            existing.append(QuestionOption(id=f"o{len(existing)+1}", label=f"اختيار {len(existing)+1}", isCorrect=False))
+        return existing[:4]
+
+    # --------------------------- description ---------------------------
+    async def generate_description(self, context=None, content_type: str = "content", title: Optional[str] = None) -> str:
+        try:
+            content_type = (content_type or "content").strip().lower()
+            type_ar = {
+                "course": "كورس", "module": "وحدة تعليمية", "lesson": "درس", "quiz": "اختبار",
+                "assignment": "واجب", "exam": "امتحان", "content": "محتوى تعليمي",
+            }.get(content_type, "محتوى تعليمي")
+            type_en = content_type
+            effective_title = self._extract_description_title(context, content_type, title)
+            search_query = self._build_context_query_from_description_context(context, content_type, effective_title)
+            all_chunks = await self.rag.retrieve_with_metadata(query=search_query, top_k=3)
+            rag_context = [c for c in all_chunks if c.get("score", 0) >= 0.35]
+            context_str = self.rag._build_context_string(rag_context) if rag_context else ""
+
+            use_arabic = language_detector.should_use_arabic(effective_title)
+            context_data = context.model_dump() if hasattr(context, "model_dump") else (context or {})
+            if use_arabic:
+                prompt = f"""
+اكتب وصفًا تعليميًا عربيًا موجزًا وواضحًا ومناسبًا لنوع المحتوى التالي.
+
+نوع المحتوى: {type_ar}
+العنوان الأساسي: {effective_title}
+بيانات السياق: {json.dumps(context_data, ensure_ascii=False)}
+
+المطلوب:
+- اجعل الوصف مناسبًا تحديدًا لنوع المحتوى المذكور.
+- إذا كان النوع اختبارًا، فاجعل الوصف يوضح أنه يقيس فهم الطالب للموضوع.
+- إذا كان النوع درسًا، فاجعل الوصف يركز على تعلم المفهوم وشرحه.
+- إذا كان النوع كورسًا، فاجعل الوصف شاملًا ويعبر عن تجربة تعليمية متكاملة.
+- إذا كان النوع واجبًا، فاجعل الوصف يوضح أنه نشاط تطبيقي يساعد على ترسيخ الفهم.
+- اكتب من 2 إلى 3 جمل فقط.
+- استخدم لغة عربية فصحى سليمة وخالية من الأخطاء.
+- راجع الهمزات، والتاء المربوطة والهاء، والألف المقصورة والياء، وعلامات الترقيم.
+- لا تبدأ بعبارات مثل: بالطبع أو إليك الوصف.
+- أخرج الوصف فقط.
+"""
+                system = f"""أنت خبير تربوي ومدقق لغوي عربي محترف. اكتب وصفًا قصيرًا مناسبًا لنوع المحتوى: {type_ar}.
+استخدم السياق التالي عند توفره كمصدر معلومات، لكن لا تذكر أنك استخدمته:\n{context_str}"""
+            else:
+                prompt = f"""Write a concise educational description.
+Content type: {type_en}
+Main title: {effective_title}
+Context data: {json.dumps(context_data, ensure_ascii=False)}
+Requirements: 2-3 sentences, suitable for the content type, no intro, final description only."""
+                system = f"You are an educational content expert. Write a short description for content type: {type_en}. Context: {context_str}"
+
+            return (await self.rag.generate_directly(prompt=prompt, system_instruction=system)).strip()
+        except Exception as e:
+            logger.error(f"Description generation failed: {e}")
+            fallback_title = title or self._extract_description_title(context, content_type)
+            return f"وصف تعليمي حول {fallback_title}" if language_detector.should_use_arabic(fallback_title) else f"Educational description about {fallback_title}"
+
+    # --------------------------- new AI endpoints ---------------------------
+    async def generate_flashcards(self, request: FlashcardsRequest) -> List[Flashcard]:
+        is_ar = language_detector.should_use_arabic(f"{request.subject} {request.chapter} {request.topic}")
+        prompt = f"""Generate {request.numberOfCards} flashcards for:
+Subject: {request.subject}
+Chapter: {request.chapter}
+Topic: {request.topic}
+Goal: {request.goal or ''}
+Use {'Arabic' if is_ar else 'English'}.
+Return JSON array only."""
+        schema = {"type":"array","items":{"front":"string","back":"string"}}
+        raw = await self._structured(prompt, schema, "You create concise educational flashcards. Return JSON only.")
+        raw = self._safe_json(raw, [])
+        if isinstance(raw, dict):
+            if "flashcards" in raw:
+                raw = raw["flashcards"]
+            elif "items" in raw:
+                raw = raw["items"]
+            else:
+                for val in raw.values():
+                    if isinstance(val, list):
+                        raw = val
+                        break
+                else:
+                    raw = []
+        return [Flashcard(front=str(x.get("front", "")), back=str(x.get("back", ""))) for x in raw[:request.numberOfCards] if isinstance(x, dict)]
+
+    async def ask_ai(self, request: AskAIRequest) -> AskAIResponse:
+        is_ar = language_detector.should_use_arabic(request.question)
+        
+        context_chunks = await self.rag.retrieve_with_metadata(request.question)
+        context_str = self.rag._build_context_string(context_chunks) if context_chunks else ""
+        
+        prompt = f"""Question: {request.question}
+Previous answer if any: {request.previousAnswer or ''}
+Context:
+{context_str}
+
+If previousAnswer is provided, explain it more clearly and add examples.
+Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else 'English'}."""
+        schema = {"type":"object","properties":{"question":"string","explanation":"string","examples":["string"]}}
+        raw = await self._structured(prompt, schema, "You are a helpful educational AI tutor. Return JSON only.")
+        raw = self._safe_json(raw, {})
+        return AskAIResponse(question=raw.get("question", request.question), explanation=raw.get("explanation", ""), examples=raw.get("examples", []) or [])
+
+    async def generate_quiz(self, request: GenerateQuizRequest) -> List[QuizQuestion]:
+        is_ar = language_detector.should_use_arabic(f"{request.subject} {request.chapter}")
+        prompt = f"""Generate {request.numberOfQuestions} MCQ quiz questions.
+Subject: {request.subject}
+Chapter: {request.chapter}
+Difficulty: {request.difficulty}
+Use {'Arabic' if is_ar else 'English'}.
+Each question must have 4 options and exactly one correct option.
+Return JSON array only."""
+        schema = {"type":"array","items":{"question":"string","options":[{"text":"string","isCorrect":"boolean"}],"explanation":"string","type":"mcq"}}
+        raw = await self._structured(prompt, schema, "You generate MCQ quizzes. Return JSON only.")
+        raw = self._safe_json(raw, [])
+        if isinstance(raw, dict):
+            if "questions" in raw:
+                raw = raw["questions"]
+            elif "items" in raw:
+                raw = raw["items"]
+            else:
+                for val in raw.values():
+                    if isinstance(val, list):
+                        raw = val
+                        break
+                else:
+                    raw = []
+        output=[]
+        for item in raw[:request.numberOfQuestions]:
+            if not isinstance(item, dict): continue
+            opts=[QuizOption(text=str(o.get("text","")), isCorrect=bool(o.get("isCorrect", False))) for o in (item.get("options") or []) if isinstance(o, dict)]
+            if opts and not any(o.isCorrect for o in opts): opts[0].isCorrect=True
+            output.append(QuizQuestion(question=item.get("question",""), options=opts[:4], explanation=item.get("explanation",""), type="mcq"))
+        return output
+
+    async def ai_assistant(self, request: AIAssistantRequest) -> str:
+        chunks = embedding_service.get_all_chunks_for_file(request.fileId)
+        text_context = "\n\n".join([c.get("text", "") for c in chunks[:12]])
+        is_ar = language_detector.should_use_arabic(request.message)
+
+        # Get conversation history
+        history = conversation_service.get_last_messages(request.student_id)
+        conversation_context = ""
+        for msg in history:
+            conversation_context += f"{msg['role'] if isinstance(msg, dict) else msg.role}: {msg['message'] if isinstance(msg, dict) else msg.message}\n"
+
+        prompt = f"""
+Conversation History:
+{conversation_context}
+
+Current User Message:
+{request.message}
+
+Course: {request.course}
+Module: {request.module}
+Lesson: {request.lesson}
+Transcript/context from fileId={request.fileId}:
+{text_context}
+
+Answer clearly in {'Arabic' if is_ar else 'English'}. Use the transcript context when relevant. If context is insufficient, say so briefly and answer generally.
+"""
+        system = "You are an educational AI assistant connected to course transcripts. Be clear, accurate, and concise."
+        ai_response = (await self.rag.generate_directly(prompt=prompt, system_instruction=system)).strip()
+
+        # Save messages
+        conversation_service.save_message(
+            request.student_id,
+            request.tenant_id,
+            "user",
+            request.message
+        )
+        conversation_service.save_message(
+            request.student_id,
+            request.tenant_id,
+            "assistant",
+            ai_response
+        )
+
+        return ai_response
+
+
+question_service = QuestionService()

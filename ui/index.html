@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG Backend Test Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <div class="header-content">
+                <h1>RAG Backend Dashboard</h1>
+                <div id="status-indicator" class="status offline">
+                    <span class="dot"></span>
+                    <span class="text">Disconnected</span>
+                </div>
+            </div>
+            <nav class="tabs">
+                <button class="tab-btn active" data-tab="ingestion">Ingestion</button>
+                <button class="tab-btn" data-tab="qa">Q&A Generation</button>
+                <button class="tab-btn" data-tab="description">Description</button>
+                <button class="tab-btn" data-tab="summary">Summary</button>
+                <button class="tab-btn" data-tab="transcript">Transcript</button>
+                <button class="tab-btn" data-tab="flashcards">Flashcards</button>
+                <button class="tab-btn" data-tab="quiz">Quiz</button>
+                <button class="tab-btn" data-tab="ask-ai">Ask AI</button>
+                <button class="tab-btn" data-tab="assistant">AI Assistant</button>
+                <button class="tab-btn" data-tab="analytics">Analytics</button>
+            </nav>
+        </header>
+
+        <main>
+            <!-- Ingestion Tab -->
+            <section id="ingestion" class="tab-content active">
+                <div class="card">
+                    <h2>Upload & Process File</h2>
+                    <p class="subtitle">Upload Documents, Images, Audio, or Video for RAG ingestion with OCR and
+                        transcription.</p>
+
+                    <form id="upload-form">
+                        <div class="form-group">
+                            <label for="file-type">File Type</label>
+                            <select id="file-type" required>
+                                <optgroup label="Documents">
+                                    <option value="document">📄 PDF Documents</option>
+                                    <option value="document">📝 Text Files (.txt, .rtf, .md)</option>
+                                    <option value="document">📖 Microsoft Word (.docx, .doc)</option>
+                                    <option value="document">📊 Microsoft Excel (.xlsx, .xls, .csv)</option>
+                                    <option value="document">📽️ Microsoft PowerPoint (.pptx, .ppt)</option>
+                                    <option value="document">📚 OpenDocument (.odt, .ods, .odp)</option>
+                                    <option value="document">📚 eBooks (.epub)</option>
+                                    <option value="document">🌐 Web Pages (.html, .xml)</option>
+                                </optgroup>
+                                <optgroup label="Images (OCR)">
+                                    <option value="image">🖼️ Images (.jpg, .png, .bmp)</option>
+                                    <option value="image">📸 Photos (.tiff, .gif, .webp)</option>
+                                    <option value="image">🎨 Graphics (.svg, .ico)</option>
+                                </optgroup>
+                                <optgroup label="Audio">
+                                    <option value="audio">🎵 Audio Files (.mp3, .wav, .m4a)</option>
+                                    <option value="audio">🎧 High Quality Audio (.flac, .aac)</option>
+                                    <option value="audio">🎤 Other Formats (.ogg, .wma, .opus)</option>
+                                </optgroup>
+                                <optgroup label="Video">
+                                    <option value="video">🎬 Videos (.mp4, .avi, .mov)</option>
+                                    <option value="video">📹 HD Videos (.mkv, .webm, .flv)</option>
+                                    <option value="video">📱 Mobile Videos (.3gp, .m4v)</option>
+                                    <option value="video">📽️ Professional Formats (.ts, .mts)</option>
+                                </optgroup>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="file-input">Select File</label>
+                            <div class="file-drop-area" id="drop-area">
+                                <span class="file-msg">Drag & drop or click to upload</span>
+                                <input type="file" id="file-input" required>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="file-id">File ID (Optional)</label>
+                            <input type="text" id="file-id" placeholder="Auto-generated if empty">
+                        </div>
+
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="semester">Semester</label>
+                                <select id="semester">
+                                    <option value="" selected>None / General</option>
+                                    <option value="Term 1">Term 1 (الفصل الأول)</option>
+                                    <option value="Term 2">Term 2 (الفصل الثاني)</option>
+                                    <option value="Fall 2023">Fall 2023</option>
+                                    <option value="Spring 2024">Spring 2024</option>
+                                    <option value="Summer 2024">Summer 2024</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="display: flex; align-items: flex-end;">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="is-course-book">
+                                    <span class="checkmark"></span>
+                                    Mark as Ref. Course Book
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="translate-to-english">
+                                <span class="checkmark"></span>
+                                Translate audio/video to English (for English-only embedding models)
+                            </label>
+                            <div class="help-text">
+                                <strong>Recommended: Keep unchecked</strong> for Arabic content with multilingual
+                                models.
+                                Check only if your embedding model is English-only.
+                            </div>
+                        </div>
+
+                        <button type="submit" class="primary-btn">Start Processing</button>
+                    </form>
+
+                    <div id="upload-progress" class="progress-container hidden">
+                        <div class="progress-header">
+                            <span id="progress-stage">Initializing...</span>
+                            <span id="progress-percent">0%</span>
+                        </div>
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar-fill" style="width: 0%"></div>
+                        </div>
+                        <div id="progress-log" class="log-box"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Q&A Tab -->
+            <section id="qa" class="tab-content">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Generate Questions</h2>
+                        <button type="button" id="magic-fill-qa" class="magic-btn" title="AI Magic Fill">✨
+                            Suggest</button>
+                    </div>
+                    <p class="subtitle">Generate educational questions based on ingested content.</p>
+
+                    <form id="qa-form">
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="qa-subject">Subject</label>
+                                <select id="qa-subject" required>
+                                    <option value="" disabled selected>Select Subject</option>
+                                    <option value="General">General</option>
+                                    <option value="Math">Math (الرياضيات)</option>
+                                    <option value="Science">Science (العلوم)</option>
+                                    <option value="Physics">Physics (الفيزياء)</option>
+                                    <option value="Chemistry">Chemistry (الكيمياء)</option>
+                                    <option value="Biology">Biology (الأحياء)</option>
+                                    <option value="History">History (التاريخ)</option>
+                                    <option value="Geography">Geography (الجغرافيا)</option>
+                                    <option value="Arabic">Arabic (اللغة العربية)</option>
+                                    <option value="English">English (اللغة الإنجليزية)</option>
+                                    <option value="Social Studies">Social Studies (دراسات اجتماعية)</option>
+                                    <option value="Computer Science">Computer Science (حاسب آلي)</option>
+                                    <option value="Islamic Studies">Islamic Studies (تربية إسلامية)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="qa-grade">Grade Level</label>
+                                <select id="qa-grade">
+                                    <option value="" disabled selected>Select Grade</option>
+                                    <option value="Primary">Primary (ابتدائي)</option>
+                                    <option value="Preparatory">Preparatory (متوسط)</option>
+                                    <option value="Secondary">Secondary (ثانوي)</option>
+                                    <option value="University">University (جامعي)</option>
+                                    <option value="Professional">Professional (مهني)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="qa-semester">Semester (Optional Filter)</label>
+                                <select id="qa-semester">
+                                    <option value="" selected>All Semesters</option>
+                                    <option value="Term 1">Term 1</option>
+                                    <option value="Term 2">Term 2</option>
+                                    <option value="Spring 2024">Spring 2024</option>
+                                    <option value="Fall 2023">Fall 2023</option>
+                                    <option value="Summer 2024">Summer 2024</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="display: flex; align-items: flex-end;">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="qa-is-course-book">
+                                    <span class="checkmark"></span>
+                                    Prioritize Course Books
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <div class="flex-between">
+                                <label for="qa-prompt">Topic / Prompt</label>
+                                <select id="qa-topic-suggestions" class="mini-select hidden">
+                                    <option value="">Suggested Topics...</option>
+                                </select>
+                            </div>
+                            <textarea id="qa-prompt" rows="3" placeholder="Enter topic or specific instructions..."
+                                required></textarea>
+                        </div>
+
+                        <div class="grid-3">
+                            <div class="form-group">
+                                <label for="qa-count">Count</label>
+                                <input type="number" id="qa-count" value="5" min="1" max="20">
+                            </div>
+                            <div class="form-group">
+                                <label for="qa-difficulty">Difficulty</label>
+                                <select id="qa-difficulty">
+                                    <option value="easy">Easy</option>
+                                    <option value="medium" selected>Medium</option>
+                                    <option value="hard">Hard</option>
+                                    <option value="mix">Mix</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="qa-type">Type</label>
+                                <select id="qa-type">
+                                    <option value="mcq">Multiple Choice</option>
+                                    <option value="true_false">True/False</option>
+                                    <option value="short_answer">Short Answer</option>
+                                    <option value="mix" selected>Mix</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="primary-btn">Generate Questions</button>
+                    </form>
+
+                    <div id="qa-results" class="results-container hidden"></div>
+                </div>
+            </section>
+
+            <!-- Description Tab -->
+            <section id="description" class="tab-content">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Generate Description</h2>
+                        <button type="button" id="magic-fill-desc" class="magic-btn" title="AI Magic Fill">✨
+                            Suggest</button>
+                    </div>
+                    <p class="subtitle">Generate a summary or description for a topic.</p>
+
+                    <form id="desc-form">
+                        <div class="form-group">
+                            <label for="desc-title">Topic Title</label>
+                            <input type="text" id="desc-title" placeholder="e.g., Quantum Mechanics" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="desc-type">Description Type</label>
+                            <select id="desc-type">
+                                <option value="lesson" selected>Lesson</option>
+                                <option value="quiz">Quiz</option>
+                                <option value="course">Course</option>
+                                <option value="module">Module</option>
+                                <option value="assignment">Assignment</option>
+                                <option value="exam">Exam</option>
+                                <option value="content">General Content</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="primary-btn">Generate</button>
+                    </form>
+
+                    <div id="desc-results" class="results-container hidden">
+                        <h3>Generated Description</h3>
+                        <div class="content-box"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Summary Tab -->
+            <section id="summary" class="tab-content">
+                <div class="card">
+                    <h2>Generate Summary</h2>
+                    <p class="subtitle">Generate a structured summary of a previously uploaded file.</p>
+
+                    <form id="summary-form">
+                        <div class="form-group">
+                            <label for="summary-file-id">File ID</label>
+                            <input type="text" id="summary-file-id" placeholder="File ID from upload" required>
+                        </div>
+
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="summary-length">Summary Length</label>
+                                <select id="summary-length">
+                                    <option value="short">Short (~100 words)</option>
+                                    <option value="medium" selected>Medium (~250 words)</option>
+                                    <option value="long">Long (~500 words)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="summary-language">Output Language</label>
+                                <select id="summary-language">
+                                    <option value="">Auto-detect</option>
+                                    <option value="ar">Arabic (العربية)</option>
+                                    <option value="en">English</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="primary-btn">Generate Summary</button>
+                    </form>
+
+                    <div id="summary-results" class="results-container hidden">
+                        <div class="summary-header">
+                            <h3>Generated Summary</h3>
+                            <div class="summary-meta">
+                                <span class="meta-tag" id="summary-lang"></span>
+                                <span class="meta-tag" id="summary-words"></span>
+                                <span class="meta-tag" id="summary-chunks"></span>
+                            </div>
+                        </div>
+                        <div class="summary-content">
+                            <div class="summary-text"></div>
+                            <div class="key-points">
+                                <h4>Key Points</h4>
+                                <ul class="points-list"></ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Transcript Tab -->
+            <section id="transcript" class="tab-content">
+                <div class="card">
+                    <h2>Get Transcript</h2>
+                    <p class="subtitle">Retrieve the full transcript for uploaded audio/video files.</p>
+
+                    <form id="transcript-form">
+                        <div class="form-group">
+                            <label for="transcript-file-id">File ID</label>
+                            <input type="text" id="transcript-file-id" placeholder="File ID from upload" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="transcript-format">Output Format</label>
+                            <select id="transcript-format">
+                                <option value="plain">Plain Text</option>
+                                <option value="timestamps">With Timestamps</option>
+                                <option value="segments">Detailed Segments</option>
+                                <option value="json">JSON (Raw)</option>
+                            </select>
+                        </div>
+
+                        <button type="submit" class="primary-btn">Get Transcript</button>
+                    </form>
+
+                    <div id="transcript-results" class="results-container hidden">
+                        <div class="transcript-header">
+                            <h3>Transcript</h3>
+                            <div class="transcript-meta">
+                                <span class="meta-tag" id="transcript-lang"></span>
+                                <span class="meta-tag" id="transcript-duration"></span>
+                                <span class="meta-tag" id="transcript-words"></span>
+                            </div>
+                        </div>
+                        <div class="transcript-content">
+                            <div class="transcript-text"></div>
+                            <div class="transcript-actions">
+                                <button class="secondary-btn" id="copy-transcript">📋 Copy Transcript</button>
+                                <button class="secondary-btn" id="download-transcript">💾 Download</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Flashcards Tab -->
+            <section id="flashcards" class="tab-content">
+                <div class="card">
+                    <h2>Generate Flashcards</h2>
+                    <p class="subtitle">Generate flashcards based on subject and topic.</p>
+                    <form id="flashcards-form">
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="flashcard-subject">Subject</label>
+                                <input type="text" id="flashcard-subject" placeholder="e.g., Biology" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="flashcard-chapter">Chapter</label>
+                                <input type="text" id="flashcard-chapter" placeholder="e.g., Cell Structure" required>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="flashcard-topic">Topic</label>
+                            <input type="text" id="flashcard-topic" placeholder="e.g., Mitochondria" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="flashcard-goal">Goal (Optional)</label>
+                            <input type="text" id="flashcard-goal" placeholder="e.g., Memorize functions">
+                        </div>
+                        <div class="form-group">
+                            <label for="flashcard-count">Number of Cards</label>
+                            <input type="number" id="flashcard-count" value="10" min="1" max="50">
+                        </div>
+                        <button type="submit" class="primary-btn">Generate Flashcards</button>
+                    </form>
+                    <div id="flashcards-results" class="results-container hidden"></div>
+                </div>
+            </section>
+
+            <!-- Quiz Tab -->
+            <section id="quiz" class="tab-content">
+                <div class="card">
+                    <h2>Generate Quiz</h2>
+                    <p class="subtitle">Generate a fast MCQ quiz for a specific chapter.</p>
+                    <form id="quiz-form">
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="quiz-subject">Subject</label>
+                                <input type="text" id="quiz-subject" placeholder="e.g., History" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="quiz-chapter">Chapter</label>
+                                <input type="text" id="quiz-chapter" placeholder="e.g., World War II" required>
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="quiz-difficulty">Difficulty</label>
+                                <select id="quiz-difficulty">
+                                    <option value="easy">Easy</option>
+                                    <option value="medium" selected>Medium</option>
+                                    <option value="hard">Hard</option>
+                                    <option value="mix">Mix</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="quiz-count">Number of Questions</label>
+                                <input type="number" id="quiz-count" value="5" min="1" max="50">
+                            </div>
+                        </div>
+                        <button type="submit" class="primary-btn">Generate Quiz</button>
+                    </form>
+                    <div id="quiz-results" class="results-container hidden"></div>
+                </div>
+            </section>
+
+            <!-- Ask AI Tab -->
+            <section id="ask-ai" class="tab-content">
+                <div class="card">
+                    <h2>Ask AI</h2>
+                    <p class="subtitle">Ask a specific question and get an explanation with examples.</p>
+                    <form id="ask-ai-form">
+                        <div class="form-group">
+                            <label for="ask-question">Question</label>
+                            <input type="text" id="ask-question" placeholder="e.g., What is Newton's third law?" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="ask-previous">Previous Answer (Optional to elaborate)</label>
+                            <textarea id="ask-previous" rows="2" placeholder="Paste a previous answer if you want more explanation..."></textarea>
+                        </div>
+                        <button type="submit" class="primary-btn">Ask</button>
+                    </form>
+                    <div id="ask-ai-results" class="results-container hidden">
+                        <div class="content-box">
+                            <h3 id="ask-res-q"></h3>
+                            <p id="ask-res-expl"></p>
+                            <h4>Examples:</h4>
+                            <ul id="ask-res-examples"></ul>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- AI Assistant Tab -->
+            <section id="assistant" class="tab-content">
+                <div class="card">
+                    <h2>AI Assistant</h2>
+                    <p class="subtitle">Chat with an assistant aware of a specific file's context.</p>
+                    <form id="assistant-form">
+                        <div class="form-group">
+                            <label for="ast-file-id">File ID (Required for context)</label>
+                            <input type="text" id="ast-file-id" placeholder="File ID" required>
+                        </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="ast-student-id">Student ID (Required)</label>
+                                <input type="text" id="ast-student-id" value="student-123" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="ast-tenant-id">Tenant ID (Required)</label>
+                                <input type="text" id="ast-tenant-id" value="tenant-abc" required>
+                            </div>
+                        </div>
+                        <div class="grid-3">
+                            <div class="form-group">
+                                <label for="ast-course">Course (Optional)</label>
+                                <input type="text" id="ast-course">
+                            </div>
+                            <div class="form-group">
+                                <label for="ast-module">Module (Optional)</label>
+                                <input type="text" id="ast-module">
+                            </div>
+                            <div class="form-group">
+                                <label for="ast-lesson">Lesson (Optional)</label>
+                                <input type="text" id="ast-lesson">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="ast-message">Message</label>
+                            <textarea id="ast-message" rows="3" placeholder="Ask something about the file..." required></textarea>
+                        </div>
+                        <button type="submit" class="primary-btn">Send Message</button>
+                    </form>
+                    <div id="assistant-results" class="results-container hidden">
+                        <h3>Response</h3>
+                        <div class="content-box" id="ast-response"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Analytics Tab -->
+            <section id="analytics" class="tab-content">
+                <div class="card">
+                    <h2>LMS Analytics</h2>
+                    <p class="subtitle">View system performance, student progress, and AI-driven insights.</p>
+                    
+                    <div class="grid-3">
+                        <button id="btn-refresh-completion" class="secondary-btn">📊 Course Completion</button>
+                        <button id="btn-refresh-performance" class="secondary-btn">📈 Student Performance</button>
+                        <button id="btn-refresh-revenue" class="secondary-btn">💰 Revenue Trends</button>
+                    </div>
+                    
+                    <div class="analytics-actions" style="margin-top: 20px;">
+                        <button id="btn-ai-analyze" class="primary-btn">✨ Generate AI Analysis</button>
+                    </div>
+
+                    <div id="analytics-results" class="results-container hidden" style="margin-top: 20px;">
+                        <div id="analytics-data-view" class="content-box hidden">
+                            <h3 id="analytics-title">Data Table</h3>
+                            <div id="analytics-table-container" style="overflow-x: auto;"></div>
+                        </div>
+                        
+                        <div id="analytics-ai-view" class="content-box hidden">
+                            <h3>AI Analysis</h3>
+                            <div id="analytics-ai-content" class="markdown-body" style="white-space: pre-wrap; line-height: 1.6;"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script src="app.js"></script>
+</body>
+
+</html>

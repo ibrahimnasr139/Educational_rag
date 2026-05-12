@@ -1,0 +1,464 @@
+"""
+Embedding service using Dhakira RAG model.
+Handles text embedding and vector database operations.
+"""
+
+import chromadb
+from chromadb.config import Settings as ChromaSettings
+from typing import List, Dict, Any, Optional
+import logging
+from config.settings import settings
+import hashlib
+import os
+import sys
+import asyncio
+
+logger = logging.getLogger(__name__)
+
+# Dhakira imports
+try:
+    _repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    _dhakira_src = os.path.join(_repo_root, "Dhakira")
+    if os.path.isdir(_dhakira_src) and _dhakira_src not in sys.path:
+        sys.path.insert(0, _dhakira_src)
+    from dhakira import Memory
+    DHAKIRA_AVAILABLE = True
+    logger.info("✓ Dhakira available")
+except ImportError as e:
+    DHAKIRA_AVAILABLE = False
+    logger.warning(f"Dhakira not available, using fallback embedding model. Error: {e}")
+
+class EmbeddingService:
+    """
+    Manages text embeddings using Dhakira RAG model with ChromaDB storage.
+    Provides efficient embedding creation and retrieval.
+    """
+    
+    def __init__(self, db_path: str = "./data/chroma_db"):
+        self.db_path = db_path
+        self.client = None
+        self.model = None
+        self.model_type = None  # Track model type: 'dhakira' or 'sentence_transformer'
+        
+        # Initialize ChromaDB client
+        self._init_chroma_client()
+        
+        # Initialize embedding model
+        self._init_embedding_model()
+    
+    def _init_embedding_model(self):
+        """Initialize Dhakira or fallback embedding model."""
+        # Always initialize fallback first so we have it
+        self._init_fallback_model()
+        
+        if DHAKIRA_AVAILABLE:
+            try:
+                logger.info("Initializing Dhakira Memory model using Gemini via OpenAI provider")
+                from dhakira.config import DhakiraConfig, LLMConfig
+                dhakira_config = DhakiraConfig(
+                    llm=LLMConfig(
+                        provider="openai",
+                        model=settings.openai_model,
+                        api_key=settings.openai_api_key,
+                        # No base_url needed for OpenAI
+                    )
+                )
+                self.model = Memory(config=dhakira_config)
+                self.model_type = "dhakira"
+                logger.info("Dhakira Memory model loaded successfully")
+            except Exception as e:
+                logger.warning(f"Dhakira initialization failed: {e}")
+                logger.info("Falling back to SentenceTransformer")
+                self.model_type = "sentence_transformer"
+                self.model = self._fallback_model
+        else:
+            logger.info(f"Initializing fallback model: {settings.embedding_model}")
+            self.model_type = "sentence_transformer"
+            self.model = self._fallback_model
+    
+    def _init_fallback_model(self):
+        """Initialize fallback SentenceTransformer model."""
+        from sentence_transformers import SentenceTransformer
+        try:
+            import torch
+            if torch.cuda.is_available():
+                device = "cuda"
+                logger.info(f"GPU available: {torch.cuda.get_device_name(0)}")
+            else:
+                device = "cpu"
+                logger.info("GPU not available, using CPU")
+            self.model = SentenceTransformer(settings.embedding_model, device=device)
+            self.model_type = "sentence_transformer"
+            self._fallback_model = self.model  # Store reference for emergency fallback
+            logger.info(f"Fallback model loaded on {device}")
+        except ImportError:
+            self.model = SentenceTransformer(settings.embedding_model)
+            self.model_type = "sentence_transformer"
+            self._fallback_model = self.model  # Store reference for emergency fallback
+            logger.info("Fallback model loaded (CPU)")
+    
+    def _init_chroma_client(self):
+        """Initialize ChromaDB persistent client."""
+        logger.info(f"Initializing ChromaDB at {self.db_path}")
+        
+        self.client = chromadb.PersistentClient(
+            path=self.db_path,
+            settings=ChromaSettings(
+                anonymized_telemetry=False,
+                allow_reset=True
+            )
+        )
+        
+        logger.info("ChromaDB initialized successfully")
+    
+    def get_or_create_collection(self, collection_name: str = "documents"):
+        """
+        Get or create a collection in ChromaDB.
+        
+        Args:
+            collection_name: Name of the collection
+            
+        Returns:
+            ChromaDB collection
+        """
+        try:
+            collection = self.client.get_or_create_collection(
+                name=collection_name,
+                metadata={"hnsw:space": "cosine"}
+            )
+            logger.info(f"Collection '{collection_name}' ready")
+            return collection
+        except Exception as e:
+            logger.error(f"Failed to get/create collection: {e}")
+            raise
+    
+    async def embed_text(self, text: str) -> List[float]:
+        """
+        Generate embedding for a single text.
+        
+        Args:
+            text: Input text
+            
+        Returns:
+            Embedding vector
+        """
+        try:
+            if self.model_type == "dhakira":
+                # Dhakira embedding - use add method to get embeddings
+                # Add text to memory and immediately retrieve to get embedding
+                temp_id = f"temp_{hashlib.md5(text.encode()).hexdigest()[:8]}"
+                
+                # Validate input
+                if not text or not text.strip():
+                    logger.warning("Empty text provided for embedding")
+                    return []
+                
+                try:
+                    embedding = await asyncio.to_thread(self.model.embed, text)
+                except Exception as dhakira_error:
+                    logger.warning(f"Dhakira embedding failed, falling back: {dhakira_error}")
+                    embedding = []
+                
+                # Fallback to sentence transformer if Dhakira fails
+                if not embedding and hasattr(self, '_fallback_model'):
+                    encoded = await asyncio.to_thread(self._fallback_model.encode, text, convert_to_numpy=True)
+                    embedding = encoded.tolist()
+            else:
+                # SentenceTransformer fallback
+                encoded = await asyncio.to_thread(self.model.encode, text, convert_to_numpy=True)
+                embedding = encoded.tolist()
+            
+            return embedding
+            
+        except Exception as e:
+            logger.error(f"Text embedding failed: {e}")
+            # Return empty embedding as fallback
+            return []
+    
+    async def embed_batch(self, texts: List[str]) -> List[List[float]]:
+        """
+        Generate embeddings for multiple texts (batch processing).
+        
+        Args:
+            texts: List of input texts
+            
+        Returns:
+            List of embedding vectors
+        """
+        try:
+            if self.model_type == "dhakira":
+                # Dhakira batch embedding - add all texts then search
+                embeddings = []
+                temp_ids = []
+                
+                # Validate inputs
+                valid_texts = [text for text in texts if text and text.strip()]
+                if not valid_texts:
+                    logger.warning("No valid texts provided for batch embedding")
+                    return []
+                
+                try:
+                    embeddings = await asyncio.to_thread(self.model.embed_batch, valid_texts)
+                except Exception as dhakira_error:
+                    logger.warning(f"Dhakira batch embedding failed, falling back: {dhakira_error}")
+                    if hasattr(self, '_fallback_model'):
+                        encoded = await asyncio.to_thread(self._fallback_model.encode, valid_texts, convert_to_numpy=True)
+                        embeddings = encoded.tolist()
+                    else:
+                        embeddings = [[] for _ in valid_texts]
+            else:
+                # SentenceTransformer batch embedding
+                encoded = await asyncio.to_thread(self.model.encode, texts, convert_to_numpy=True)
+                embeddings = encoded.tolist()
+            
+            logger.info(f"Generated {len(embeddings)} embeddings")
+            return embeddings
+            
+        except Exception as e:
+            logger.error(f"Batch embedding failed: {e}")
+            # Return empty list as fallback
+            return []
+    
+    async def add_documents(
+        self,
+        texts: List[str],
+        metadatas: List[Dict[str, Any]],
+        file_id: str,
+        start_idx: int = 0,
+        collection_name: str = "documents"
+    ) -> List[str]:
+        """
+        Add documents to vector database.
+        
+        Args:
+            texts: List of text chunks
+            metadatas: List of metadata dictionaries
+            file_id: File identifier
+            collection_name: Target collection
+            
+        Returns:
+            List of document IDs
+        """
+        try:
+            collection = self.get_or_create_collection(collection_name)
+            
+            # Generate embeddings
+            embeddings = await self.embed_batch(texts)
+            
+            try:
+                from services.database_service import database_service
+                import asyncio
+                model_name = self.model_type or "sentence-transformer"
+                await asyncio.to_thread(
+                    database_service.save_chunks,
+                    file_id=file_id,
+                    chunks=texts,
+                    embeddings=embeddings,
+                    model_name=model_name,
+                    metadatas=metadatas,
+                    start_idx=start_idx
+                )
+            except Exception as db_e:
+                logger.error(f"Failed to save chunks to DB: {db_e}")
+            
+            # Generate unique IDs
+            ids = [
+                self._generate_doc_id(file_id, start_idx + idx)
+                for idx in range(len(texts))
+            ]
+            
+            # Keep only successful embeddings to avoid Chroma dimension errors
+            valid_items = [(i, text, meta, emb) for i, (text, meta, emb) in enumerate(zip(texts, metadatas, embeddings)) if emb]
+            if not valid_items:
+                logger.warning("No valid embeddings generated for this batch")
+                return []
+
+            valid_ids = [ids[i] for i, _, _, _ in valid_items]
+            valid_texts = [text for _, text, _, _ in valid_items]
+            valid_metadatas = [meta for _, _, meta, _ in valid_items]
+            valid_embeddings = [emb for _, _, _, emb in valid_items]
+
+            # Upsert keeps repeated processing of the same fileId idempotent.
+            collection.upsert(
+                embeddings=valid_embeddings,
+                documents=valid_texts,
+                metadatas=valid_metadatas,
+                ids=valid_ids
+            )
+            
+            logger.info(f"Added {len(texts)} documents to collection '{collection_name}'")
+            return ids
+            
+        except Exception as e:
+            logger.error(f"Failed to add documents: {e}")
+            raise
+    
+    async def search(
+        self,
+        query: str,
+        n_results: int = 5,
+        collection_name: str = "documents",
+        filter_metadata: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Search for similar documents.
+        
+        Args:
+            query: Search query
+            n_results: Number of results to return
+            collection_name: Collection to search
+            filter_metadata: Optional metadata filters
+            
+        Returns:
+            List of search results with text, metadata, and scores
+        """
+        try:
+            collection = self.get_or_create_collection(collection_name)
+            
+            # Generate query embedding
+            query_embedding = await self.embed_text(query)
+            
+            if not query_embedding:
+                return []
+
+            clean_filter = {k: v for k, v in (filter_metadata or {}).items() if v not in (None, '', [], {})}
+
+            # Search asynchronously
+            results = await asyncio.to_thread(
+                collection.query,
+                query_embeddings=[query_embedding],
+                n_results=n_results,
+                where=clean_filter or None,
+                include=['documents', 'metadatas', 'distances']
+            )
+            
+            # Format results
+            formatted_results = []
+            if results['documents'] and len(results['documents']) > 0 and results['documents'][0]:
+                for idx in range(len(results['documents'][0])):
+                    formatted_results.append({
+                        'text': results['documents'][0][idx],
+                        'metadata': results['metadatas'][0][idx] if results['metadatas'] and len(results['metadatas'][0]) > idx else {},
+                        'score': 1.0 - results['distances'][0][idx] if results['distances'] and len(results['distances'][0]) > idx else 0.0
+                    })
+            
+            logger.info(f"Search returned {len(formatted_results)} results")
+            return formatted_results
+            
+        except Exception as e:
+            logger.error(f"Search failed: {e}")
+            raise
+    
+    def _generate_doc_id(self, file_id: str, index: int) -> str:
+        """
+        Generate unique document ID.
+        
+        Args:
+            file_id: File identifier
+            index: Chunk index
+            
+        Returns:
+            Unique document ID
+        """
+        # Create deterministic ID
+        content = f"{file_id}_{index}"
+        doc_id = hashlib.md5(content.encode()).hexdigest()
+        return doc_id
+    
+    async def delete_file_documents(
+        self,
+        file_id: str,
+        collection_name: str = "documents"
+    ):
+        """
+        Delete all documents associated with a file.
+        
+        Args:
+            file_id: File identifier
+            collection_name: Collection name
+        """
+        try:
+            collection = self.get_or_create_collection(collection_name)
+            
+            # Query for ALL documents with this file_id (high limit to avoid truncation)
+            results = collection.get(
+                where={"file_id": file_id},
+                limit=10000
+            )
+            
+            if results and results['ids']:
+                collection.delete(ids=results['ids'])
+                logger.info(f"Deleted {len(results['ids'])} documents for file {file_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to delete documents: {e}")
+
+    def get_all_chunks_for_file(
+        self,
+        file_id: str,
+        collection_name: str = "documents"
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieve ALL stored chunks for a given file_id, sorted by chunk_id.
+        Used by SummaryService to reconstruct the full document text.
+
+        Args:
+            file_id:         The file identifier used during embedding.
+            collection_name: Collection to query (default: "documents").
+
+        Returns:
+            List of {"text": str, "metadata": dict} sorted by chunk_id.
+            Empty list if file_id not found.
+        """
+        try:
+            collection = self.get_or_create_collection(collection_name)
+
+            results = collection.get(
+                where={"file_id": file_id},
+                include=["documents", "metadatas"],
+                limit=10000  # Default is 10, increasing to 10k to ensure full text reconstruction
+            )
+
+            if not results or not results.get("documents"):
+                logger.info(f"No chunks found for file_id='{file_id}'")
+                return []
+
+            chunks = [
+                {"text": text, "metadata": meta or {}}
+                for text, meta in zip(results["documents"], results["metadatas"])
+            ]
+
+            # Sort by original chunk order
+            chunks.sort(key=lambda c: c["metadata"].get("chunk_id", 0))
+            logger.info(f"Retrieved {len(chunks)} chunks for file_id='{file_id}'")
+            return chunks
+
+        except Exception as e:
+            logger.error(f"get_all_chunks_for_file failed for '{file_id}': {e}")
+            return []
+    
+    def get_collection_stats(self, collection_name: str = "documents") -> Dict[str, Any]:
+        """
+        Get statistics about a collection.
+        
+        Args:
+            collection_name: Collection name
+            
+        Returns:
+            Statistics dictionary
+        """
+        try:
+            collection = self.get_or_create_collection(collection_name)
+            count = collection.count()
+            
+            return {
+                "collection_name": collection_name,
+                "document_count": count
+            }
+        except Exception as e:
+            logger.error(f"Failed to get stats: {e}")
+            return {"error": str(e)}
+
+
+# Global instance
+embedding_service = EmbeddingService()

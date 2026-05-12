@@ -1,0 +1,81 @@
+from __future__ import annotations
+
+from typing import List
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
+
+    # Server
+    host: str = '0.0.0.0'
+    port: int = 8000
+    debug: bool = False
+    log_level: str = 'INFO'
+    log_file: str = './logs/app.log'
+
+    # CORS
+    cors_origins: str = '*'
+    cors_methods: str = '*'
+    cors_headers: str = '*'
+
+    # Database / Storage
+    database_url: str = 'sqlite:///./data/app.db'
+    vector_db_path: str = './data/chroma_db'
+    upload_path: str = './data/uploads'
+    temp_path: str = './data/temp'
+    transcript_path: str = './data/transcripts'
+
+    # Uploads
+    max_file_size: int = 500  # MB
+
+    # Chunking
+    chunk_size: int = 1000
+    chunk_overlap: int = 150
+    embedding_batch_size: int = 32
+
+    # LLM providers
+    llm_provider: str = 'gemini'  # gemini | openai
+    google_api_key: str = ''
+    gemini_model: str = 'gemini-2.5-flash'
+    gemini_temperature: float = 0.3
+    gemini_max_tokens: int = 8192
+
+    openai_api_key: str = ''
+    openai_model: str = 'gpt-4.1-nano'
+    openai_temperature: float = 0.3
+    openai_max_tokens: int = 8192
+
+    # Embeddings / Dhakira
+    embedding_provider: str = 'sentence_transformer'  # dhakira | sentence_transformer
+    embedding_model: str = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
+
+    # Whisper
+    whisper_model: str = 'base'
+    whisper_device: str = 'cpu'
+
+    # OCR
+    tesseract_path: str = ''
+    ocr_languages: str = 'ara+eng'
+
+    # Language
+    default_language: str = 'ar'
+    fallback_language: str = 'en'
+    supported_languages: str = 'ar,en,fr,es'
+
+    # Callbacks
+    callback_timeout: int = 15
+
+    @property
+    def cors_origins_list(self) -> List[str]:
+        if self.cors_origins.strip() == '*':
+            return ['*']
+        return [x.strip() for x in self.cors_origins.split(',') if x.strip()]
+
+    @property
+    def supported_languages_list(self) -> List[str]:
+        return [x.strip() for x in self.supported_languages.split(',') if x.strip()]
+
+
+settings = Settings()
