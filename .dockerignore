@@ -49,4 +49,11 @@ chroma_db/
 # Windows binaries and large models/setup files
 ffmpeg-bin/
 poppler-bin/
+Dhakira/
+ara.traineddata
+*.traineddata
+منهج/
 tesseract-ocr-w64-setup-*.exe
+
+# Git metadata is not needed in the runtime image
+.git/
