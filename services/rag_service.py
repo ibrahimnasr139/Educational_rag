@@ -3,7 +3,8 @@ RAG service integrating Dhakira embeddings with Google Gemini for generation.
 Handles retrieval-augmented generation for question creation and descriptions.
 """
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from typing import List, Dict, Any, Optional
 import logging
 import json
@@ -66,10 +67,16 @@ class RAGService:
                 logger.warning("LLM provider is set to 'openai' but OpenAI fallback is unavailable; falling back to Gemini")
                 self.provider = "gemini"
             # Configure Google Gemini
-            genai.configure(api_key=settings.google_api_key)
-            self.model = genai.GenerativeModel(settings.gemini_model)
+            self.gemini_client = genai.Client(api_key=settings.google_api_key)
+            self.gemini_model_name = settings.gemini_model
             
-            logger.info(f"RAG Service default initialized with Gemini ({settings.gemini_model})")
+            # Map old generation_config to new GenerateContentConfig
+            self.gemini_config = types.GenerateContentConfig(
+                temperature=self.generation_config.get("temperature"),
+                max_output_tokens=self.generation_config.get("max_output_tokens")
+            )
+            
+            logger.info(f"RAG Service default initialized with Gemini ({settings.gemini_model_name})")
     
     async def retrieve_context(
         self,
@@ -212,9 +219,10 @@ class RAGService:
                         return await self._fallback_to_gemini(full_prompt)
                     raise
             else:
-                response = self.model.generate_content(
-                    full_prompt,
-                    generation_config=self.generation_config
+                response = self.gemini_client.models.generate_content(
+                    model=self.gemini_model_name,
+                    contents=full_prompt,
+                    config=self.gemini_config
                 )
                 return response.text
             
@@ -254,16 +262,18 @@ class RAGService:
                     logger.error(f"OpenAI generation failed: {e}")
                     if self._is_quota_error(e):
                         logger.warning(f"OpenAI quota exceeded, falling back to Gemini")
-                        response = self.model.generate_content(
-                            full_prompt,
-                            generation_config=self.generation_config
+                        response = self.gemini_client.models.generate_content(
+                            model=self.gemini_model_name,
+                            contents=full_prompt,
+                            config=self.gemini_config
                         )
                         return response.text
                     raise
             else:
-                response = self.model.generate_content(
-                    full_prompt,
-                    generation_config=self.generation_config
+                response = self.gemini_client.models.generate_content(
+                    model=self.gemini_model_name,
+                    contents=full_prompt,
+                    config=self.gemini_config
                 )
                 return response.text
             
@@ -311,9 +321,10 @@ class RAGService:
     async def _fallback_to_gemini(self, prompt: str) -> str:
         """Fallback to Gemini when OpenAI fails."""
         try:
-            response = self.model.generate_content(
-                prompt,
-                generation_config=self.generation_config
+            response = self.gemini_client.models.generate_content(
+                model=self.gemini_model_name,
+                contents=prompt,
+                config=self.gemini_config
             )
             return response.text
         except Exception as e:

@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -19,8 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 
-# Cache bust - change this value to force full pip reinstall: v5
-RUN echo "cache-bust-v5"
+# Cache bust - change this value to force full pip reinstall: v6
+RUN echo "cache-bust-v6"
 
 # Step 1: Upgrade pip and tools
 RUN pip install --upgrade pip setuptools wheel
@@ -47,4 +47,4 @@ COPY . .
 RUN mkdir -p data/uploads data/temp data/transcripts data/chroma_db logs
 
 EXPOSE 8000
-CMD ["gunicorn", "main:app", "-w", "2", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "180"]
+CMD ["gunicorn", "main:app", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "180"]
