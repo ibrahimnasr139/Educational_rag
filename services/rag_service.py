@@ -196,9 +196,21 @@ class RAGService:
             # Generate response
             provider_to_use = (force_provider or self.provider).lower()
             if provider_to_use == "gpt-4.1-nano" and self.gpt4_nano_llm:
-                return await self.gpt4_nano_llm.generate(prompt=prompt, system=system_instruction)
+                try:
+                    return await self.gpt4_nano_llm.generate(prompt=prompt, system=system_instruction)
+                except Exception as e:
+                    if self._is_quota_error(e):
+                        logger.warning(f"OpenAI quota exceeded, falling back to Gemini")
+                        return await self._fallback_to_gemini(full_prompt)
+                    raise
             elif provider_to_use == "openai" and self.openai_llm:
-                return await self.openai_llm.generate(prompt=prompt, system=system_instruction)
+                try:
+                    return await self.openai_llm.generate(prompt=prompt, system=system_instruction)
+                except Exception as e:
+                    if self._is_quota_error(e):
+                        logger.warning(f"OpenAI quota exceeded, falling back to Gemini")
+                        return await self._fallback_to_gemini(full_prompt)
+                    raise
             else:
                 response = self.model.generate_content(
                     full_prompt,
@@ -236,7 +248,18 @@ class RAGService:
             
             # Generate response
             if self.provider == "openai":
-                return await self.llm.generate(prompt=full_prompt)
+                try:
+                    return await self.llm.generate(prompt=full_prompt)
+                except Exception as e:
+                    logger.error(f"OpenAI generation failed: {e}")
+                    if self._is_quota_error(e):
+                        logger.warning(f"OpenAI quota exceeded, falling back to Gemini")
+                        response = self.model.generate_content(
+                            full_prompt,
+                            generation_config=self.generation_config
+                        )
+                        return response.text
+                    raise
             else:
                 response = self.model.generate_content(
                     full_prompt,
@@ -279,6 +302,23 @@ class RAGService:
         parts.append(f"=== USER REQUEST ===\n{user_prompt}")
         
         return "\n".join(parts)
+
+    def _is_quota_error(self, error: Exception) -> bool:
+        """Check if error is due to OpenAI quota exhaustion."""
+        error_str = str(error).lower()
+        return "insufficient_quota" in error_str or "quota" in error_str and "429" in error_str
+    
+    async def _fallback_to_gemini(self, prompt: str) -> str:
+        """Fallback to Gemini when OpenAI fails."""
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config=self.generation_config
+            )
+            return response.text
+        except Exception as e:
+            logger.error(f"Gemini fallback also failed: {e}")
+            raise
     
     async def rag_query(
         self,

@@ -3,6 +3,11 @@ from __future__ import annotations
 from typing import List
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from dotenv import load_dotenv
+import os
+
+# Force load .env with override=True to prioritize .env file over system environment variables
+load_dotenv(override=True)
 
 
 class Settings(BaseSettings):
