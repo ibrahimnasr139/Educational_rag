@@ -10,7 +10,7 @@ openai-whisper>=20231117
 torch>=2.4.0
 transformers>=4.37.0
 sentence-transformers>=2.3.1
-numpy>=2.1.0
+numpy>=1.26.4
 
 # Vector Database
 chromadb>=0.5.3

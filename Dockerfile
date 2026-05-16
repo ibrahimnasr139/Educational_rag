@@ -19,8 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 RUN pip install --upgrade "pip<26" "setuptools<81" wheel \
-    && pip install --no-build-isolation openai-whisper==20231117 \
-    && pip install torch==2.1.2 torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu121 \
+    && pip install "numpy<2.0.0" \
+    && pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu121 \
     && pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
 
 COPY . .
