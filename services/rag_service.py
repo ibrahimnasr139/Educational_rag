@@ -76,7 +76,7 @@ class RAGService:
                 max_output_tokens=self.generation_config.get("max_output_tokens")
             )
             
-            logger.info(f"RAG Service default initialized with Gemini ({settings.gemini_model_name})")
+            logger.info(f"RAG Service default initialized with Gemini ({settings.gemini_model})")
     
     async def retrieve_context(
         self,
