@@ -1,8 +1,5 @@
 FROM python:3.10-slim
 
-# Cache bust: 2026-05-16
-ARG CACHEBUST=1
-
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
@@ -22,20 +19,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 
+# Cache bust - change this value to force full pip reinstall: v5
+RUN echo "cache-bust-v5"
+
 # Step 1: Upgrade pip and tools
 RUN pip install --upgrade pip setuptools wheel
 
-# Step 2: Install numpy < 2.0.0 FIRST to prevent chromadb from pulling numpy 2.x
+# Step 2: Install numpy < 2.0.0 FIRST before anything else touches it
 RUN pip install "numpy<2.0.0"
 
-# Step 3: Install torch (CPU or GPU)
+# Step 3: Install chromadb with numpy pinned (this resolves the np.float_ error)
+RUN pip install "chromadb>=0.5.3"
+
+# Step 4: Re-pin numpy in case chromadb upgraded it
+RUN pip install "numpy<2.0.0" --upgrade
+
+# Step 5: Install torch
 RUN pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu121
 
-# Step 4: Install all other requirements (numpy pin will be respected)
+# Step 6: Install remaining requirements
 RUN pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
 
-# Step 5: Force-install compatible chromadb AFTER all other deps, no upgrades to numpy
-RUN pip install "chromadb>=0.5.3" "numpy<2.0.0" --upgrade
+# Step 7: Final safety re-pin of numpy
+RUN pip install "numpy<2.0.0"
 
 COPY . .
 RUN mkdir -p data/uploads data/temp data/transcripts data/chroma_db logs
