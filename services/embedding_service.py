@@ -198,14 +198,24 @@ class EmbeddingService:
                     return []
                 
                 try:
-                    embeddings = await asyncio.to_thread(self.model.embed_batch, valid_texts)
+                    embeddings_valid = await asyncio.to_thread(self.model.embed_batch, valid_texts)
+                    # Map back to original texts to maintain length
+                    embeddings = []
+                    valid_idx = 0
+                    for text in texts:
+                        if text and text.strip() and valid_idx < len(embeddings_valid):
+                            embeddings.append(embeddings_valid[valid_idx])
+                            valid_idx += 1
+                        else:
+                            embeddings.append([])
+                    return embeddings
                 except Exception as dhakira_error:
                     logger.warning(f"Dhakira batch embedding failed, falling back: {dhakira_error}")
                     if hasattr(self, '_fallback_model'):
-                        encoded = await asyncio.to_thread(self._fallback_model.encode, valid_texts, convert_to_numpy=True)
+                        encoded = await asyncio.to_thread(self._fallback_model.encode, texts, convert_to_numpy=True)
                         embeddings = encoded.tolist()
                     else:
-                        embeddings = [[] for _ in valid_texts]
+                        embeddings = [[] for _ in texts]
             else:
                 # SentenceTransformer batch embedding
                 encoded = await asyncio.to_thread(self.model.encode, texts, convert_to_numpy=True)

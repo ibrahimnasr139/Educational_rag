@@ -442,8 +442,9 @@ class DocumentProcessingService:
         
         # 1. Save JSON file (for format=raw in UI)
         transcript_filename = f"{os.path.basename(file_path)}.json"
-        os.makedirs(settings.transcript_path, exist_ok=True)
-        transcript_file_path = os.path.join(settings.transcript_path, transcript_filename)
+        transcript_dir = getattr(settings, "transcript_path", "./data/transcripts")
+        os.makedirs(transcript_dir, exist_ok=True)
+        transcript_file_path = os.path.join(transcript_dir, transcript_filename)
         
         # Create full result structure similar to Whisper output
         result = {

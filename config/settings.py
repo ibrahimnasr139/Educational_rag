@@ -6,8 +6,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
 import os
 
-# Force load .env with override=True to prioritize .env file over system environment variables
-load_dotenv(override=True)
+# Priority: System Environment > .env file
+load_dotenv(override=False)
 
 
 class Settings(BaseSettings):

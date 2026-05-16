@@ -47,6 +47,6 @@ class ConversationService:
                 "limit": limit
             }).fetchall()
 
-            return list(reversed(rows))
+            return [{"role": r.role, "message": r.message} for r in reversed(rows)]
 
 conversation_service = ConversationService()

@@ -148,6 +148,8 @@ class OCRService:
                                 self._extract_text_from_image, 
                                 images[0]
                             )
+                            if not text.strip():
+                                logger.warning(f"OCR returned empty text for page {page_num}")
                             results[page_num] = text
                     except Exception as pg_err:
                         logger.warning(f"Failed OCR on page {page_num}: {pg_err}")

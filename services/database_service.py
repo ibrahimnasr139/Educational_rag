@@ -1,4 +1,5 @@
 from sqlalchemy import create_engine
+from contextlib import contextmanager
 from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import sessionmaker, Session
 from config.settings import settings
@@ -37,8 +38,16 @@ class DatabaseService:
             logger.error(f"Failed to initialize database (check DATABASE_URL/SSL/network): {e}")
             raise
 
+    @contextmanager
     def get_session(self) -> Session:
-        return self.SessionLocal()
+        session = self.SessionLocal()
+        try:
+            yield session
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
     def save_file_info(
         self,

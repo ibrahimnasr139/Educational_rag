@@ -22,6 +22,11 @@ class RAGService:
     """
     
     def __init__(self):
+        # Initialize attributes to avoid potential AttributeError
+        self.llm = None
+        self.openai_llm = None
+        self.gpt4_nano_llm = None
+        
         # Determine provider
         self.provider = settings.llm_provider.lower()
         # Always define generation_config because structured generation uses it even when OpenAI is selected.
@@ -404,45 +409,43 @@ class RAGService:
         question_config["max_output_tokens"] = 8192  # Ensure enough tokens for multiple questions
         
         # Generate
-        response_text = await self.generate_with_context(
-            prompt=prompt,
-            context=context,
-            system_instruction=full_instruction
-        )
+        max_retries = 2
+        last_error = None
         
-        # Parse JSON
-        try:
-            # Remove markdown code blocks if present
-            cleaned = response_text.strip()
-            if cleaned.startswith("```json"):
-                cleaned = cleaned[7:]
-            if cleaned.startswith("```"):
-                cleaned = cleaned[3:]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3]
-            
-            cleaned = cleaned.strip()
-            
-            # Check if JSON is truncated (common issue with long responses)
-            if not cleaned.endswith('}') and not cleaned.endswith(']'):
-                logger.warning("Response appears to be truncated, attempting to fix...")
-                # Try to fix truncated JSON by adding missing brackets
-                open_brackets = cleaned.count('{') - cleaned.count('}')
-                open_arrays = cleaned.count('[') - cleaned.count(']')
+        current_prompt = prompt
+        
+        for attempt in range(max_retries):
+            try:
+                response_text = await self.generate_with_context(
+                    prompt=current_prompt,
+                    context=context,
+                    system_instruction=full_instruction
+                )
                 
-                for _ in range(open_brackets):
-                    cleaned += '}'
-                for _ in range(open_arrays):
-                    cleaned += ']'
-            
-            parsed = json.loads(cleaned)
-            return parsed
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON response: {e}")
-            logger.error(f"Response was: {response_text[:500]}...")  # Log first 500 chars
-            logger.error(f"Cleaned response: {cleaned[:500]}...")  # Log first 500 chars
-            raise ValueError("Generated response was not valid JSON")
+                # Parse JSON
+                # Remove markdown code blocks if present
+                cleaned = response_text.strip()
+                if cleaned.startswith("```json"):
+                    cleaned = cleaned[7:]
+                if cleaned.startswith("```"):
+                    cleaned = cleaned[3:]
+                if cleaned.endswith("```"):
+                    cleaned = cleaned[:-3]
+                
+                cleaned = cleaned.strip()
+                parsed = json.loads(cleaned)
+                return parsed
+                
+            except json.JSONDecodeError as e:
+                last_error = e
+                logger.warning(f"JSON parse attempt {attempt + 1} failed: {e}")
+                # For retry, explicitly ask for shorter output or more strictly valid JSON
+                current_prompt = f"{prompt}\n\nIMPORTANT: Your previous response was not valid JSON. Please ensure the response is strictly valid JSON and if it was too long, make it shorter/more concise to avoid truncation."
+            except Exception as e:
+                last_error = e
+                logger.error(f"Generation attempt {attempt + 1} failed: {e}")
+                
+        raise ValueError(f"Generated response was not valid JSON after {max_retries} attempts. Last error: {last_error}")
 
 
 # Global instance

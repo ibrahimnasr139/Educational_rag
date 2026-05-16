@@ -101,8 +101,6 @@ class TextChunker:
         
         return chunk_objects
     
-        return chunk_objects
-    
     def chunk_whisper_segments(
         self,
         segments: List[Dict[str, Any]],

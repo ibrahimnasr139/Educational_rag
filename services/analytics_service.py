@@ -12,38 +12,50 @@ class AnalyticsService:
             return [dict(row._mapping) for row in result.fetchall()]
 
     def get_completion_insights(self):
-        query = """
-        SELECT 
-            c.title, 
-            AVG(cp.progress_percentage) as avg_progress
-        FROM course_progress cp
-        JOIN courses c ON c.id = cp.course_id
-        GROUP BY c.title
-        """
-        return self._execute(query)
+        try:
+            query = """
+            SELECT 
+                c.title, 
+                AVG(cp.progress_percentage) as avg_progress
+            FROM course_progress cp
+            JOIN courses c ON c.id = cp.course_id
+            GROUP BY c.title
+            """
+            return self._execute(query)
+        except Exception as e:
+            logger.warning(f"Analytics table missing (completion): {e}")
+            return []
 
     def get_performance_insights(self):
-        query = """
-        SELECT 
-            s.full_name, 
-            AVG(g.grade) as avg_grade
-        FROM student_grades g
-        JOIN students s ON s.id = g.student_id
-        GROUP BY s.full_name
-        """
-        return self._execute(query)
+        try:
+            query = """
+            SELECT 
+                s.full_name, 
+                AVG(g.grade) as avg_grade
+            FROM student_grades g
+            JOIN students s ON s.id = g.student_id
+            GROUP BY s.full_name
+            """
+            return self._execute(query)
+        except Exception as e:
+            logger.warning(f"Analytics table missing (performance): {e}")
+            return []
 
     def get_revenue_insights(self):
-        # Using DATE_TRUNC as requested (PostgreSQL)
-        query = """
-        SELECT 
-            DATE_TRUNC('month', created_at) as month, 
-            SUM(amount) as total_revenue
-        FROM student_subscriptions
-        GROUP BY month
-        ORDER BY month DESC
-        """
-        return self._execute(query)
+        try:
+            # Using DATE_TRUNC as requested (PostgreSQL)
+            query = """
+            SELECT 
+                DATE_TRUNC('month', created_at) as month, 
+                SUM(amount) as total_revenue
+            FROM student_subscriptions
+            GROUP BY month
+            ORDER BY month DESC
+            """
+            return self._execute(query)
+        except Exception as e:
+            logger.warning(f"Analytics table missing (revenue): {e}")
+            return []
 
     async def analyze_with_ai(self):
         try:

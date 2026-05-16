@@ -35,10 +35,10 @@ RUN pip install "chromadb>=0.5.3"
 RUN pip install "numpy<2.0.0" --upgrade
 
 # Step 5: Install torch
-RUN pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu121
+RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Step 6: Install remaining requirements
-RUN pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
+RUN pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cpu
 
 # Step 7: Final safety re-pin of numpy
 RUN pip install "numpy<2.0.0"
