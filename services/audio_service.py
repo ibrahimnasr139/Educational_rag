@@ -3,7 +3,10 @@ import os
 import asyncio
 import logging
 from typing import Optional
-from moviepy.editor import VideoFileClip
+try:
+    from moviepy.editor import VideoFileClip  # moviepy 1.x
+except ImportError:
+    from moviepy import VideoFileClip  # moviepy 2.x
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
