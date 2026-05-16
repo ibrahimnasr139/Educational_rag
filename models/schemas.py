@@ -113,7 +113,7 @@ DescriptionType = Literal["course", "module", "lesson", "quiz", "assignment", "e
 class GenerateDescriptionRequest(BaseModel):
     # New contract: context + type. title is kept for backwards compatibility with old UI.
     context: Optional[DescriptionContext] = None
-    type: DescriptionType = "content"
+    type: DescriptionType = Field(default="content", validation_alias="descriptionType")
     title: Optional[str] = None
 
 
@@ -221,10 +221,17 @@ class AskAIResponse(BaseModel):
 
 
 class GenerateQuizRequest(BaseModel):
-    subject: str
-    numberOfQuestions: int = Field(default=10, ge=1, le=50)
-    difficulty: Literal["easy", "medium", "hard", "mix"] = "medium"
-    chapter: str
+    subject: str = Field(..., validation_alias="topic")
+    numberOfQuestions: int = Field(default=10, ge=1, le=50, validation_alias="questionsNumber")
+    difficulty: DifficultyLevel = Field(default=DifficultyLevel.MEDIUM)
+    chapter: str = Field(default="", validation_alias="module")
+
+    @field_validator("difficulty", mode="before")
+    @classmethod
+    def normalize_difficulty(cls, v):
+        if v == "hard": return "difficult"
+        if v == "mix": return "mix"
+        return v
 
 
 class QuizOption(BaseModel):
