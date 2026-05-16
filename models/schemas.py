@@ -4,7 +4,7 @@ Compatible with Pydantic v2.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator, RootModel
+from pydantic import BaseModel, Field, field_validator, RootModel, ConfigDict
 from typing import List, Optional, Dict, Any, Literal
 from models.enums import FileType, QuestionType, DifficultyLevel, ProcessingStatus, ProcessingStage
 
@@ -111,6 +111,7 @@ DescriptionType = Literal["course", "module", "lesson", "quiz", "assignment", "e
 
 
 class GenerateDescriptionRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     # New contract: context + type. title is kept for backwards compatibility with old UI.
     context: Optional[DescriptionContext] = None
     type: DescriptionType = Field(default="content", validation_alias="descriptionType")
@@ -198,7 +199,7 @@ class EmbedFileResponse(BaseModel):
 
 class FlashcardsRequest(BaseModel):
     subject: str
-    chapter: str
+    chapter: Optional[str] = ""
     topic: str
     goal: Optional[str] = None
     numberOfCards: int = Field(default=10, ge=1, le=50)
@@ -221,6 +222,7 @@ class AskAIResponse(BaseModel):
 
 
 class GenerateQuizRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     subject: str = Field(..., validation_alias="topic")
     numberOfQuestions: int = Field(default=10, ge=1, le=50, validation_alias="questionsNumber")
     difficulty: DifficultyLevel = Field(default=DifficultyLevel.MEDIUM)
