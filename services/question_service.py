@@ -335,10 +335,10 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
         return AskAIResponse(question=raw.get("question", request.question), explanation=raw.get("explanation", ""), examples=raw.get("examples", []) or [])
 
     async def generate_quiz(self, request: GenerateQuizRequest) -> List[QuizQuestion]:
-        is_ar = language_detector.should_use_arabic(f"{request.subject} {request.chapter}")
+        is_ar = language_detector.should_use_arabic(f"{request.subject} {request.chapter or ''}")
         prompt = f"""Generate {request.numberOfQuestions} MCQ quiz questions.
 Subject: {request.subject}
-Chapter: {request.chapter}
+Chapter: {request.chapter or ''}
 Difficulty: {request.difficulty}
 Use {'Arabic' if is_ar else 'English'}.
 Each question must have 4 options and exactly one correct option.

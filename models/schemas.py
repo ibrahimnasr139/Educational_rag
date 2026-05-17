@@ -226,7 +226,7 @@ class GenerateQuizRequest(BaseModel):
     subject: str = Field(..., validation_alias="topic")
     numberOfQuestions: int = Field(default=10, ge=1, le=50, validation_alias="questionsNumber")
     difficulty: DifficultyLevel = Field(default=DifficultyLevel.MEDIUM)
-    chapter: str = Field(default="", validation_alias="module")
+    chapter: Optional[str] = Field(default=None, validation_alias="module")
 
     @field_validator("difficulty", mode="before")
     @classmethod
