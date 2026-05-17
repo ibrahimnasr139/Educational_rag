@@ -139,6 +139,7 @@ Requirements:
 - For True/False: correctAnswer must be "true" or "false".
 - For Short Answer: correctAnswer should be a concise model answer.
 - Use difficulty: easy, medium, difficult.
+- Assign marks between 1 and 5 based on difficulty (e.g., 1-2 for easy, 3 for medium, 4-5 for difficult).
 - Age-appropriate for: {grade}.
 - Subject: {subject}. Module: {module}.
 Return JSON only."""
