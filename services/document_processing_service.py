@@ -198,9 +198,12 @@ class DocumentProcessingService:
         
         # 2. Identify pages needing OCR (30-60%)
         bad_page_indices = []
-        for i, text in enumerate(page_texts):
-            if not self.ocr_service.is_text_extractable(text):
-                bad_page_indices.append(i + 1) # 1-indexed for OCR service
+        ext = file_path.lower().split('.')[-1]
+        ocr_capable_exts = {'pdf', 'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif'}
+        if ext in ocr_capable_exts:
+            for i, text in enumerate(page_texts):
+                if not self.ocr_service.is_text_extractable(text):
+                    bad_page_indices.append(i + 1) # 1-indexed for OCR service
         
         if bad_page_indices:
             logger.info(f"Pages needing OCR: {bad_page_indices}")
@@ -209,7 +212,10 @@ class DocumentProcessingService:
             )
 
             if (settings.ocr_provider or "local").lower() == "openai":
-                ocr_text = await self.ocr_service.extract_text_from_pdf(file_path)
+                if ext == 'pdf':
+                    ocr_text = await self.ocr_service.extract_text_from_pdf(file_path)
+                else:
+                    ocr_text = await self.ocr_service.extract_text_from_image(file_path)
                 if ocr_text.strip():
                     language = language_detector.detect_language(ocr_text)
                     await self.progress_service.update(
@@ -441,13 +447,15 @@ class DocumentProcessingService:
                 job_id, progress, ProcessingStage.EMBEDDING, callback_url
             )
             
-            # Add batch to database
-            await self.embedding_service.add_documents(
+            # Add batch to vector database
+            added_ids = await self.embedding_service.add_documents(
                 texts=batch_texts,
                 metadatas=batch_metadatas,
                 file_id=file_id,
                 start_idx=i
             )
+            if not added_ids:
+                raise ValueError("No embeddings were generated for this batch")
         
         # Indexing complete
         await self.progress_service.update(

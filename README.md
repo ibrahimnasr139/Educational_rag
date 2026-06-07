@@ -50,6 +50,10 @@ SAVE_CHUNKS_TO_POSTGRES=false
 
 This keeps document, image, audio, and video features available while avoiding Torch, Whisper, SentenceTransformers, MoviePy, Tesseract, and Poppler in the web service. Railway still installs `ffmpeg` so video/audio can be compressed before sending it to the transcription API. Use the full `requirements.txt` profile locally when you want fully local Whisper/Tesseract processing.
 
+When switching to `EMBEDDING_PROVIDER=openai`, new vectors are stored in a separate Chroma collection named `documents_openai` because OpenAI embeddings use a different dimension than the local/Dhakira embeddings. Re-ingest files after switching providers.
+
+Environment variables override `.env` values. If OpenAI calls fail with quota errors while the `.env` key works locally, check that Railway's `OPENAI_API_KEY` is the same active project key.
+
 ## Dhakira
 
 If you want to use Dhakira directly, clone it inside the project root:

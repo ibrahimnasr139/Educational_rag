@@ -134,6 +134,12 @@ class EmbeddingService:
         )
         
         logger.info("ChromaDB initialized successfully")
+
+    def _effective_collection_name(self, collection_name: str) -> str:
+        """Avoid mixing embeddings with incompatible dimensions in one collection."""
+        if collection_name == "documents" and (settings.embedding_provider or "").lower() == "openai":
+            return "documents_openai"
+        return collection_name
     
     def get_or_create_collection(self, collection_name: str = "documents"):
         """
@@ -146,6 +152,7 @@ class EmbeddingService:
             ChromaDB collection
         """
         try:
+            collection_name = self._effective_collection_name(collection_name)
             collection = self.client.get_or_create_collection(
                 name=collection_name,
                 metadata={"hnsw:space": "cosine"}
@@ -499,11 +506,12 @@ class EmbeddingService:
             Statistics dictionary
         """
         try:
+            effective_collection_name = self._effective_collection_name(collection_name)
             collection = self.get_or_create_collection(collection_name)
             count = collection.count()
             
             return {
-                "collection_name": collection_name,
+                "collection_name": effective_collection_name,
                 "document_count": count
             }
         except Exception as e:
