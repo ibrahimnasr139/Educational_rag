@@ -119,7 +119,10 @@ async def health_check():
         "database": stats,
         "settings": {
             "whisper_model": settings.whisper_model,
+            "transcription_provider": settings.transcription_provider,
+            "ocr_provider": settings.ocr_provider,
             "embedding_model": settings.embedding_model,
+            "embedding_provider": settings.embedding_provider,
             "default_language": settings.default_language,
             "llm_provider": settings.llm_provider,
         },
@@ -352,13 +355,17 @@ async def get_chunks_for_transcript(file_id: str):
 @app.get("/api/get-transcript-raw/{file_id}")
 async def get_transcript_raw(file_id: str):
     transcript_path = getattr(settings, "transcript_path", "./data/transcripts")
-    try:
-        for filename in os.listdir(transcript_path):
-            if filename.startswith(file_id) and filename.endswith(".json"):
-                with open(os.path.join(transcript_path, filename), "r", encoding="utf-8") as f:
-                    return json.load(f)
-    except FileNotFoundError:
-        pass
+    if settings.save_transcript_files:
+        try:
+            for filename in os.listdir(transcript_path):
+                if filename.startswith(file_id) and filename.endswith(".json"):
+                    with open(os.path.join(transcript_path, filename), "r", encoding="utf-8") as f:
+                        return json.load(f)
+        except FileNotFoundError:
+            pass
+    db_transcript = database_service.get_transcript_raw(file_id)
+    if db_transcript:
+        return db_transcript
     raise HTTPException(status_code=404, detail="Transcript raw data not found")
 
 

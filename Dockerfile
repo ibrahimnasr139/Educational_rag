@@ -2,46 +2,27 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    EMBEDDING_PROVIDER=openai \
+    TRANSCRIPTION_PROVIDER=openai \
+    OCR_PROVIDER=openai \
+    ENABLE_AUDIO_PROCESSING=true \
+    ENABLE_OCR_PROCESSING=true \
+    KEEP_UPLOADED_FILES=false \
+    SAVE_TRANSCRIPT_FILES=false \
+    SAVE_CHUNKS_TO_POSTGRES=false
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     ffmpeg \
-    tesseract-ocr \
-    tesseract-ocr-ara \
-    poppler-utils \
-    git \
-    build-essential \
-    libgl1 \
-    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY requirements-prod.txt .
 
-# Cache bust - change this value to force full pip reinstall: v7
-RUN echo "cache-bust-v7"
-
-# Step 1: Upgrade pip and tools
 RUN pip install --upgrade pip setuptools wheel
-
-# Step 2: Install numpy < 2.0.0 FIRST before anything else touches it
-RUN pip install "numpy<2.0.0"
-
-# Step 3: Install chromadb with numpy pinned (this resolves the np.float_ error)
-RUN pip install "chromadb>=0.5.3"
-
-# Step 4: Re-pin numpy in case chromadb upgraded it
-RUN pip install "numpy<2.0.0" --upgrade
-
-# Step 5: Install torch
-RUN pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
-
-# Step 6: Install remaining requirements
-RUN pip install -r requirements.txt
-
-# Step 7: Final safety re-pin of numpy
-RUN pip install "numpy<2.0.0"
+RUN pip install -r requirements-prod.txt
 
 COPY . .
 RUN mkdir -p data/uploads data/temp data/transcripts data/chroma_db logs

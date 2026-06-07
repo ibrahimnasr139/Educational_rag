@@ -53,14 +53,26 @@ class Settings(BaseSettings):
     openai_max_tokens: int = 8192
 
     # Embeddings / Dhakira
-    embedding_provider: str = 'sentence_transformer'  # dhakira | sentence_transformer
+    embedding_provider: str = 'sentence_transformer'  # openai | dhakira | sentence_transformer
     embedding_model: str = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
+    openai_embedding_model: str = 'text-embedding-3-small'
+
+    # Cost controls
+    enable_audio_processing: bool = True
+    enable_ocr_processing: bool = True
+    keep_uploaded_files: bool = True
+    save_transcript_files: bool = True
+    save_chunks_to_postgres: bool = True
 
     # Whisper
+    transcription_provider: str = 'local'  # openai | local
+    openai_transcription_model: str = 'gpt-4o-mini-transcribe'
     whisper_model: str = 'base'
     whisper_device: str = 'cpu'
 
     # OCR
+    ocr_provider: str = 'local'  # openai | local
+    openai_ocr_model: str = 'gpt-4.1-mini'
     tesseract_path: str = ''
     ocr_languages: str = 'ara+eng'
 

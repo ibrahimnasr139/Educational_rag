@@ -1,12 +1,8 @@
-import whisper
 import os
 import asyncio
 import logging
+import subprocess
 from typing import Optional
-try:
-    from moviepy.editor import VideoFileClip  # moviepy 1.x
-except ImportError:
-    from moviepy import VideoFileClip  # moviepy 2.x
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -24,21 +20,10 @@ class AudioService:
 
     def __init__(self):
         self.whisper_model_name = settings.whisper_model
-        # Force GPU detection - override settings if CUDA is available
-        try:
-            import torch
-            if torch.cuda.is_available():
-                self.device = "cuda"
-                logger.info(f"GPU detected: {torch.cuda.get_device_name(0)}, using CUDA")
-            else:
-                self.device = settings.whisper_device
-                logger.info("No GPU detected, using CPU")
-        except ImportError:
-            self.device = settings.whisper_device
-            logger.info("PyTorch not available, using settings device")
-        
+        self.device = settings.whisper_device
         self.temp_path = settings.temp_path
         self._model = None
+        self._openai_client = None
 
     # ------------------------------------------------------------------
     # Model loading (lazy, thread-safe)
@@ -47,7 +32,22 @@ class AudioService:
     @property
     def model(self):
         """Lazy-load Whisper model once on first use."""
+        if not settings.enable_audio_processing:
+            raise RuntimeError("Audio processing is disabled. Set ENABLE_AUDIO_PROCESSING=true to enable it.")
         if self._model is None:
+            try:
+                import whisper
+            except ImportError as exc:
+                raise RuntimeError("Whisper is not installed. Use full requirements or enable a worker for audio processing.") from exc
+
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    self.device = "cuda"
+                    logger.info(f"GPU detected: {torch.cuda.get_device_name(0)}, using CUDA")
+            except ImportError:
+                logger.info("PyTorch not available, using settings device")
+
             logger.info(f"Loading Whisper model '{self.whisper_model_name}' on {self.device}")
             self._model = whisper.load_model(
                 self.whisper_model_name,
@@ -63,7 +63,7 @@ class AudioService:
     async def extract_audio_from_video(self, video_path: str) -> str:
         """
         Extract audio track from a video file.
-        Runs FFmpeg via moviepy in a thread so the event loop is never blocked.
+        Runs FFmpeg in a thread so the event loop is never blocked.
 
         Returns:
             Path to the extracted .mp3 file.
@@ -73,24 +73,30 @@ class AudioService:
         audio_filename = os.path.splitext(os.path.basename(video_path))[0] + ".mp3"
         audio_path = os.path.join(self.temp_path, audio_filename)
 
-        # Run the blocking moviepy call in a thread pool
+        # Run the blocking FFmpeg call in a thread pool
         await asyncio.to_thread(self._extract_audio_sync, video_path, audio_path)
 
         logger.info(f"Audio extracted to: {audio_path}")
         return audio_path
 
     def _extract_audio_sync(self, video_path: str, audio_path: str):
-        """Synchronous moviepy extraction (runs inside a thread)."""
-        video = VideoFileClip(video_path)
-        try:
-            video.audio.write_audiofile(
-                audio_path,
-                codec="mp3",
-                bitrate="128k",
-                logger=None       # suppress moviepy progress bar
-            )
-        finally:
-            video.close()
+        """Synchronous FFmpeg extraction (runs inside a thread)."""
+        if not settings.enable_audio_processing:
+            raise RuntimeError("Audio processing is disabled. Set ENABLE_AUDIO_PROCESSING=true to enable it.")
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", video_path,
+            "-vn",
+            "-ac", "1",
+            "-ar", "16000",
+            "-b:a", "64k",
+            audio_path,
+        ]
+        completed = subprocess.run(cmd, capture_output=True, text=True)
+        if completed.returncode != 0:
+            raise RuntimeError(f"FFmpeg audio extraction failed: {completed.stderr[-500:]}")
 
     # ------------------------------------------------------------------
     # Core transcription
@@ -132,6 +138,24 @@ class AudioService:
             f"Transcribing | task={task} | "
             f"language_hint={language or 'auto-detect'}"
         )
+
+        if (settings.transcription_provider or "local").lower() == "openai":
+            result = await asyncio.to_thread(
+                self._transcribe_openai_sync,
+                audio_path,
+                language,
+                translate_to_english
+            )
+            transcript_text = result.get("text", "").strip()
+            detected_language = result.get("language", language or "unknown")
+            was_translated = translate_to_english
+            return {
+                "text": transcript_text,
+                "language": "en" if was_translated else detected_language,
+                "translated": was_translated,
+                "original_language": detected_language,
+                "segments": result.get("segments", [])
+            }
 
         # Whisper is CPU/GPU bound -> run in thread pool, never blocks event loop
         result = await asyncio.to_thread(
@@ -179,6 +203,73 @@ class AudioService:
             condition_on_previous_text=False,  # Faster processing
             temperature=0.0  # Deterministic for speed
         )
+
+    def _get_openai_client(self):
+        if not settings.openai_api_key:
+            raise RuntimeError("TRANSCRIPTION_PROVIDER=openai requires OPENAI_API_KEY")
+        if self._openai_client is None:
+            from openai import OpenAI
+            self._openai_client = OpenAI(api_key=settings.openai_api_key)
+        return self._openai_client
+
+    def _prepare_audio_for_openai(self, audio_path: str) -> tuple[str, bool]:
+        """Return an API-ready audio path and whether it should be removed."""
+        max_direct_bytes = 24 * 1024 * 1024
+        ext = os.path.splitext(audio_path)[1].lower()
+        supported = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm"}
+        if ext in supported and os.path.getsize(audio_path) <= max_direct_bytes:
+            return audio_path, False
+
+        os.makedirs(self.temp_path, exist_ok=True)
+        converted_path = os.path.join(
+            self.temp_path,
+            f"{os.path.splitext(os.path.basename(audio_path))[0]}_openai.mp3"
+        )
+        self._extract_audio_sync(audio_path, converted_path)
+        return converted_path, True
+
+    def _transcribe_openai_sync(
+        self,
+        audio_path: str,
+        language: Optional[str],
+        translate_to_english: bool
+    ) -> dict:
+        client = self._get_openai_client()
+        api_audio_path, should_remove = self._prepare_audio_for_openai(audio_path)
+        try:
+            with open(api_audio_path, "rb") as audio_file:
+                kwargs = {
+                    "model": settings.openai_transcription_model,
+                    "file": audio_file,
+                }
+                if language and not translate_to_english:
+                    kwargs["language"] = language
+                if settings.openai_transcription_model == "whisper-1":
+                    kwargs["response_format"] = "verbose_json"
+
+                if translate_to_english and settings.openai_transcription_model == "whisper-1":
+                    response = client.audio.translations.create(**kwargs)
+                else:
+                    response = client.audio.transcriptions.create(**kwargs)
+
+            if hasattr(response, "model_dump"):
+                data = response.model_dump()
+            elif isinstance(response, dict):
+                data = response
+            else:
+                data = {"text": getattr(response, "text", str(response))}
+
+            return {
+                "text": data.get("text", ""),
+                "language": data.get("language", language or "unknown"),
+                "segments": data.get("segments", []),
+            }
+        finally:
+            if should_remove:
+                try:
+                    os.remove(api_audio_path)
+                except OSError:
+                    pass
 
     # ------------------------------------------------------------------
     # High-level pipelines

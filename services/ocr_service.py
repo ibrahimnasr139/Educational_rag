@@ -4,11 +4,10 @@ Uses Tesseract OCR with Arabic and English support.
 """
 
 import asyncio
-import pytesseract
-from pdf2image import convert_from_path
-from PIL import Image
+import base64
+import mimetypes
 import os
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from config.settings import settings
 import logging
 
@@ -22,8 +21,10 @@ class OCRService:
     """
     
     def __init__(self):
+        self._openai_client = None
         # Set Tesseract path if specified
-        if settings.tesseract_path:
+        if settings.enable_ocr_processing and self._provider() == "local" and settings.tesseract_path:
+            pytesseract = self._get_pytesseract()
             # Use absolute path and normalize slashes for Windows
             tess_path = os.path.abspath(settings.tesseract_path)
             pytesseract.pytesseract.tesseract_cmd = tess_path
@@ -45,6 +46,37 @@ class OCRService:
         
         self.ocr_languages = settings.ocr_languages
         self.temp_path = settings.temp_path
+
+    def _provider(self) -> str:
+        return (settings.ocr_provider or "local").lower()
+
+    def _ensure_enabled(self):
+        if not settings.enable_ocr_processing:
+            raise RuntimeError("OCR processing is disabled. Set ENABLE_OCR_PROCESSING=true to enable it.")
+
+    def _get_pytesseract(self):
+        self._ensure_enabled()
+        try:
+            import pytesseract
+            return pytesseract
+        except ImportError as exc:
+            raise RuntimeError("pytesseract is not installed. Use full requirements or enable an OCR worker.") from exc
+
+    def _get_convert_from_path(self):
+        self._ensure_enabled()
+        try:
+            from pdf2image import convert_from_path
+            return convert_from_path
+        except ImportError as exc:
+            raise RuntimeError("pdf2image is not installed. Use full requirements or enable an OCR worker.") from exc
+
+    def _open_image(self, image_path: str):
+        self._ensure_enabled()
+        try:
+            from PIL import Image
+            return Image.open(image_path)
+        except ImportError as exc:
+            raise RuntimeError("Pillow is not installed. Use full requirements or enable an OCR worker.") from exc
     
     async def extract_text_from_pdf(self, pdf_path: str) -> str:
         """
@@ -57,8 +89,12 @@ class OCRService:
         Returns:
             Extracted text
         """
+        if self._provider() == "openai":
+            return await asyncio.to_thread(self._extract_text_with_openai, pdf_path, "pdf")
+
         try:
             logger.info(f"Starting OCR on PDF: {pdf_path}")
+            convert_from_path = self._get_convert_from_path()
             
             # Convert PDF to images with slightly lower DPI for stability
             # 200-300 is ideal for OCR. 200 saves memory on many-page documents.
@@ -115,6 +151,10 @@ class OCRService:
         """
         if not page_numbers:
             return {}
+
+        if self._provider() == "openai":
+            text = await self.extract_text_from_pdf(pdf_path)
+            return {page_numbers[0]: text}
             
         try:
             results = {}
@@ -132,6 +172,7 @@ class OCRService:
                         poppler_path = None
                         if os.path.exists("./poppler-bin/Library/bin"):
                             poppler_path = os.path.abspath("./poppler-bin/Library/bin")
+                        convert_from_path = self._get_convert_from_path()
 
                         # Use to_thread to keep the event loop responsive
                         images = await asyncio.to_thread(
@@ -170,9 +211,12 @@ class OCRService:
         Returns:
             Extracted text
         """
+        if self._provider() == "openai":
+            return await asyncio.to_thread(self._extract_text_with_openai, image_path, "image")
+
         try:
             logger.info(f"Starting OCR on image: {image_path}")
-            image = Image.open(image_path)
+            image = self._open_image(image_path)
             text = self._extract_text_from_image(image)
             logger.info(f"OCR completed. Extracted {len(text)} characters")
             return text
@@ -181,7 +225,7 @@ class OCRService:
             logger.error(f"OCR failed for image {image_path}: {e}")
             raise
     
-    def _extract_text_from_image(self, image: Image.Image) -> str:
+    def _extract_text_from_image(self, image: Any) -> str:
         """
         Apply Tesseract OCR to PIL Image.
         
@@ -197,6 +241,7 @@ class OCRService:
             
             # Apply OCR with specified languages
             config = r'--oem 3 --psm 6'  # LSTM engine, assume uniform text block
+            pytesseract = self._get_pytesseract()
             text = pytesseract.image_to_string(
                 image,
                 lang=self.ocr_languages,
@@ -210,7 +255,7 @@ class OCRService:
             # Return empty string on error rather than failing
             return ""
     
-    def _preprocess_image(self, image: Image.Image) -> Image.Image:
+    def _preprocess_image(self, image: Any) -> Any:
         """
         Preprocess image to improve OCR accuracy.
         
@@ -275,6 +320,71 @@ class OCRService:
         # Otherwise, apply OCR
         logger.info("Direct extraction insufficient, applying OCR")
         return await self.extract_text_from_pdf(pdf_path)
+
+    def _get_openai_client(self):
+        if not settings.openai_api_key:
+            raise RuntimeError("OCR_PROVIDER=openai requires OPENAI_API_KEY")
+        if self._openai_client is None:
+            from openai import OpenAI
+            self._openai_client = OpenAI(api_key=settings.openai_api_key)
+        return self._openai_client
+
+    def _extract_text_with_openai(self, file_path: str, file_kind: str) -> str:
+        self._ensure_enabled()
+        client = self._get_openai_client()
+        mime_type = mimetypes.guess_type(file_path)[0]
+        if not mime_type:
+            mime_type = "application/pdf" if file_kind == "pdf" else "image/png"
+
+        with open(file_path, "rb") as f:
+            encoded = base64.b64encode(f.read()).decode("ascii")
+
+        prompt = (
+            "Extract all readable text from this file for a RAG index. "
+            "Preserve Arabic and English text exactly where possible. "
+            "Return only the extracted text, with page breaks when visible."
+        )
+
+        if file_kind == "pdf":
+            file_content = {
+                "type": "input_file",
+                "filename": os.path.basename(file_path),
+                "file_data": f"data:{mime_type};base64,{encoded}",
+            }
+        else:
+            file_content = {
+                "type": "input_image",
+                "image_url": f"data:{mime_type};base64,{encoded}",
+            }
+
+        response = client.responses.create(
+            model=settings.openai_ocr_model,
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": prompt},
+                        file_content,
+                    ],
+                }
+            ],
+        )
+
+        text = getattr(response, "output_text", None)
+        if text:
+            return text.strip()
+
+        if hasattr(response, "model_dump"):
+            data = response.model_dump()
+            output_parts = []
+            for item in data.get("output", []):
+                for content in item.get("content", []):
+                    value = content.get("text")
+                    if value:
+                        output_parts.append(value)
+            return "\n".join(output_parts).strip()
+
+        return str(response).strip()
 
 
 # Global instance

@@ -4,6 +4,7 @@ Handles document, audio, and video files with progress tracking.
 """
 
 import asyncio
+import os
 from typing import List, Dict, Optional, Tuple, Any
 import logging
 from PyPDF2 import PdfReader
@@ -58,6 +59,7 @@ class DocumentProcessingService:
         """
         Process a file through the complete pipeline.
         """
+        file_path = None
         try:
             # Start job
             await self.progress_service.start_job(job_id, callback_url)
@@ -164,6 +166,14 @@ class DocumentProcessingService:
                 job_id, str(e), callback_url
             )
             raise
+        finally:
+            if file_path and not settings.keep_uploaded_files:
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        logger.info(f"Removed uploaded file after processing: {file_path}")
+                except OSError as cleanup_error:
+                    logger.warning(f"Could not remove uploaded file {file_path}: {cleanup_error}")
     
     async def _process_document(
         self,
@@ -197,6 +207,15 @@ class DocumentProcessingService:
             await self.progress_service.update(
                 job_id, 30, ProcessingStage.OCR, callback_url
             )
+
+            if (settings.ocr_provider or "local").lower() == "openai":
+                ocr_text = await self.ocr_service.extract_text_from_pdf(file_path)
+                if ocr_text.strip():
+                    language = language_detector.detect_language(ocr_text)
+                    await self.progress_service.update(
+                        job_id, 60, ProcessingStage.TEXT_EXTRACTION, callback_url
+                    )
+                    return ocr_text, language
             
             # Extract only problematic pages
             ocr_results = await self.ocr_service.extract_pages_with_ocr(file_path, bad_page_indices)
@@ -440,25 +459,27 @@ class DocumentProcessingService:
         import json
         import os
         
-        # 1. Save JSON file (for format=raw in UI)
-        transcript_filename = f"{os.path.basename(file_path)}.json"
-        transcript_dir = getattr(settings, "transcript_path", "./data/transcripts")
-        os.makedirs(transcript_dir, exist_ok=True)
-        transcript_file_path = os.path.join(transcript_dir, transcript_filename)
-        
-        # Create full result structure similar to Whisper output
-        result = {
-            "text": text,
-            "language": language,
-            "segments": segments or []
-        }
-        
-        try:
-            with open(transcript_file_path, 'w', encoding='utf-8') as f:
-                json.dump(result, f, ensure_ascii=False, indent=2)
-            logger.info(f"Saved transcript JSON to {transcript_file_path}")
-        except Exception as e:
-            logger.error(f"Failed to save transcript JSON: {e}")
+        # 1. Save JSON file (for format=raw in UI) only when local file
+        # persistence is enabled.
+        if settings.save_transcript_files:
+            transcript_filename = f"{os.path.basename(file_path)}.json"
+            transcript_dir = getattr(settings, "transcript_path", "./data/transcripts")
+            os.makedirs(transcript_dir, exist_ok=True)
+            transcript_file_path = os.path.join(transcript_dir, transcript_filename)
+            
+            # Create full result structure similar to Whisper output
+            result = {
+                "text": text,
+                "language": language,
+                "segments": segments or []
+            }
+            
+            try:
+                with open(transcript_file_path, 'w', encoding='utf-8') as f:
+                    json.dump(result, f, ensure_ascii=False, indent=2)
+                logger.info(f"Saved transcript JSON to {transcript_file_path}")
+            except Exception as e:
+                logger.error(f"Failed to save transcript JSON: {e}")
 
         # 2. Save to PostgreSQL
         try:

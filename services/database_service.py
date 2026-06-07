@@ -154,6 +154,34 @@ class DatabaseService:
                 logger.error(f"Failed to save timestamps: {e}")
                 raise
 
+    def get_transcript_raw(self, file_id: str) -> dict | None:
+        with self.get_session() as session:
+            transcript = session.query(Transcripts).filter(Transcripts.file_id == file_id).first()
+            if not transcript:
+                return None
+
+            timestamps = (
+                session.query(VideoTimestamps)
+                .filter(VideoTimestamps.file_id == file_id)
+                .order_by(VideoTimestamps.segment_index.asc())
+                .all()
+            )
+            segments = [
+                {
+                    "id": row.segment_index,
+                    "text": row.text or "",
+                    "start": float(row.start_time or 0.0),
+                    "end": float(row.end_time or 0.0),
+                }
+                for row in timestamps
+            ]
+
+            return {
+                "text": transcript.full_text or "",
+                "language": transcript.language or "unknown",
+                "segments": segments,
+            }
+
     def get_file_metadata(self, file_id: str):
         try:
             with self.get_session() as session:

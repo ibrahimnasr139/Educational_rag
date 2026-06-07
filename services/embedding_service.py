@@ -39,19 +39,27 @@ class EmbeddingService:
         self.client = None
         self.model = None
         self.model_type = None  # Track model type: 'dhakira' or 'sentence_transformer'
+        self._fallback_model = None
+        self._openai_client = None
         
         # Initialize ChromaDB client
         self._init_chroma_client()
-        
-        # Initialize embedding model
-        self._init_embedding_model()
+
+        # Embedding models are initialized lazily. Loading Torch/SentenceTransformer
+        # at import time is expensive on small Railway instances.
     
     def _init_embedding_model(self):
         """Initialize Dhakira or fallback embedding model."""
-        # Always initialize fallback first so we have it
-        self._init_fallback_model()
-        
-        if DHAKIRA_AVAILABLE:
+        if self.model is not None:
+            return
+
+        provider = (settings.embedding_provider or "sentence_transformer").lower()
+
+        if provider == "openai":
+            self._init_openai_model()
+            return
+
+        if provider == "dhakira" and DHAKIRA_AVAILABLE:
             try:
                 logger.info("Initializing Dhakira Memory model using Gemini via OpenAI provider")
                 from dhakira.config import DhakiraConfig, LLMConfig
@@ -66,18 +74,34 @@ class EmbeddingService:
                 self.model = Memory(config=dhakira_config)
                 self.model_type = "dhakira"
                 logger.info("Dhakira Memory model loaded successfully")
+                return
             except Exception as e:
                 logger.warning(f"Dhakira initialization failed: {e}")
                 logger.info("Falling back to SentenceTransformer")
-                self.model_type = "sentence_transformer"
-                self.model = self._fallback_model
-        else:
-            logger.info(f"Initializing fallback model: {settings.embedding_model}")
-            self.model_type = "sentence_transformer"
-            self.model = self._fallback_model
+
+        if provider == "dhakira" and not DHAKIRA_AVAILABLE:
+            logger.warning("Dhakira requested but unavailable; falling back to SentenceTransformer")
+
+        logger.info(f"Initializing fallback model: {settings.embedding_model}")
+        self._init_fallback_model()
+        self.model_type = "sentence_transformer"
+        self.model = self._fallback_model
+
+    def _init_openai_model(self):
+        """Initialize lightweight API-based embeddings."""
+        if not settings.openai_api_key:
+            raise RuntimeError("EMBEDDING_PROVIDER=openai requires OPENAI_API_KEY")
+        from openai import AsyncOpenAI
+
+        self._openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+        self.model_type = "openai"
+        self.model = self._openai_client
+        logger.info(f"OpenAI embeddings initialized: {settings.openai_embedding_model}")
     
     def _init_fallback_model(self):
         """Initialize fallback SentenceTransformer model."""
+        if self._fallback_model is not None:
+            return
         from sentence_transformers import SentenceTransformer
         try:
             import torch
@@ -143,6 +167,7 @@ class EmbeddingService:
             Embedding vector
         """
         try:
+            self._init_embedding_model()
             if self.model_type == "dhakira":
                 # Dhakira embedding - use add method to get embeddings
                 # Add text to memory and immediately retrieve to get embedding
@@ -164,6 +189,13 @@ class EmbeddingService:
                     encoded = await asyncio.to_thread(self._fallback_model.encode, text, convert_to_numpy=True)
                     embedding = encoded.tolist()
             else:
+                if self.model_type == "openai":
+                    response = await self._openai_client.embeddings.create(
+                        model=settings.openai_embedding_model,
+                        input=text
+                    )
+                    return response.data[0].embedding
+
                 # SentenceTransformer fallback
                 encoded = await asyncio.to_thread(self.model.encode, text, convert_to_numpy=True)
                 embedding = encoded.tolist()
@@ -186,6 +218,7 @@ class EmbeddingService:
             List of embedding vectors
         """
         try:
+            self._init_embedding_model()
             if self.model_type == "dhakira":
                 # Dhakira batch embedding - add all texts then search
                 embeddings = []
@@ -217,6 +250,13 @@ class EmbeddingService:
                     else:
                         embeddings = [[] for _ in texts]
             else:
+                if self.model_type == "openai":
+                    response = await self._openai_client.embeddings.create(
+                        model=settings.openai_embedding_model,
+                        input=texts
+                    )
+                    return [item.embedding for item in response.data]
+
                 # SentenceTransformer batch embedding
                 encoded = await asyncio.to_thread(self.model.encode, texts, convert_to_numpy=True)
                 embeddings = encoded.tolist()
@@ -255,21 +295,22 @@ class EmbeddingService:
             # Generate embeddings
             embeddings = await self.embed_batch(texts)
             
-            try:
+            if settings.save_chunks_to_postgres:
                 from services.database_service import database_service
                 import asyncio
                 model_name = self.model_type or "sentence-transformer"
-                await asyncio.to_thread(
-                    database_service.save_chunks,
-                    file_id=file_id,
-                    chunks=texts,
-                    embeddings=embeddings,
-                    model_name=model_name,
-                    metadatas=metadatas,
-                    start_idx=start_idx
-                )
-            except Exception as db_e:
-                logger.error(f"Failed to save chunks to DB: {db_e}")
+                try:
+                    await asyncio.to_thread(
+                        database_service.save_chunks,
+                        file_id=file_id,
+                        chunks=texts,
+                        embeddings=embeddings,
+                        model_name=model_name,
+                        metadatas=metadatas,
+                        start_idx=start_idx
+                    )
+                except Exception as db_e:
+                    logger.error(f"Failed to save chunks to DB: {db_e}")
             
             # Generate unique IDs
             ids = [
