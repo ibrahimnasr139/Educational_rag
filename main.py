@@ -12,6 +12,20 @@ import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
+# Add local binaries to PATH
+_project_root = os.path.dirname(os.path.abspath(__file__))
+_ffmpeg_dir = os.path.join(_project_root, "ffmpeg-bin")
+_poppler_dir = os.path.join(_project_root, "poppler-bin", "Library", "bin")
+
+_paths_to_add = []
+if os.path.exists(_ffmpeg_dir):
+    _paths_to_add.append(_ffmpeg_dir)
+if os.path.exists(_poppler_dir):
+    _paths_to_add.append(_poppler_dir)
+
+if _paths_to_add:
+    os.environ["PATH"] = os.pathsep.join(_paths_to_add) + os.pathsep + os.environ.get("PATH", "")
+
 from fastapi import FastAPI, File, UploadFile, Form, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse

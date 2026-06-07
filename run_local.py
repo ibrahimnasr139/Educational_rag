@@ -9,6 +9,20 @@ import sys
 import uvicorn
 from pathlib import Path
 
+# Add local binaries to PATH
+_project_root = os.path.dirname(os.path.abspath(__file__))
+_ffmpeg_dir = os.path.join(_project_root, "ffmpeg-bin")
+_poppler_dir = os.path.join(_project_root, "poppler-bin", "Library", "bin")
+
+_paths_to_add = []
+if os.path.exists(_ffmpeg_dir):
+    _paths_to_add.append(_ffmpeg_dir)
+if os.path.exists(_poppler_dir):
+    _paths_to_add.append(_poppler_dir)
+
+if _paths_to_add:
+    os.environ["PATH"] = os.pathsep.join(_paths_to_add) + os.pathsep + os.environ.get("PATH", "")
+
 # Colors for terminal output
 class Colors:
     GREEN = '\033[92m'
@@ -23,7 +37,7 @@ def check_environment():
     env_file = Path('.env')
     
     if not env_file.exists():
-        print(f"{Colors.RED}✗ .env file not found!{Colors.ENDC}")
+        print(f"{Colors.RED}[ERROR] .env file not found!{Colors.ENDC}")
         print(f"\nPlease create .env file:")
         print(f"  cp .env.example .env")
         print(f"  nano .env  # Add your GOOGLE_API_KEY")
@@ -34,7 +48,7 @@ def check_environment():
         content = f.read()
         if 'GOOGLE_API_KEY=your_google_api_key_here' in content or \
            'GOOGLE_API_KEY=' not in content:
-            print(f"{Colors.YELLOW}⚠ Warning: GOOGLE_API_KEY not set in .env{Colors.ENDC}")
+            print(f"{Colors.YELLOW}[WARN] GOOGLE_API_KEY not set in .env{Colors.ENDC}")
             print(f"  Please edit .env and add your Google API key")
             return False
     
@@ -47,10 +61,10 @@ def check_dependencies():
         import uvicorn
         import chromadb
         import whisper
-        print(f"{Colors.GREEN}✓ Dependencies installed{Colors.ENDC}")
+        print(f"{Colors.GREEN}[OK] Dependencies installed{Colors.ENDC}")
         return True
     except ImportError as e:
-        print(f"{Colors.RED}✗ Missing dependency: {e.name}{Colors.ENDC}")
+        print(f"{Colors.RED}[ERROR] Missing dependency: {e.name}{Colors.ENDC}")
         print(f"\nPlease run setup first:")
         print(f"  bash local_setup.sh")
         return False
@@ -63,10 +77,10 @@ def check_dhakira():
         if dhakira_src.exists() and str(dhakira_src) not in sys.path:
             sys.path.insert(0, str(dhakira_src))
         from dhakira.embeddings.huggingface_ import HuggingFaceEmbeddings
-        print(f"{Colors.GREEN}✓ Dhakira available{Colors.ENDC}")
+        print(f"{Colors.GREEN}[OK] Dhakira available{Colors.ENDC}")
         return True
     except ImportError:
-        print(f"{Colors.YELLOW}⚠ Dhakira not found, will use fallback model{Colors.ENDC}")
+        print(f"{Colors.YELLOW}[WARN] Dhakira not found, will use fallback model{Colors.ENDC}")
         return True  # Not critical, we have fallback
 
 def create_directories():
@@ -74,7 +88,7 @@ def create_directories():
     dirs = ['data/chroma_db', 'data/uploads', 'data/temp', 'logs']
     for dir_path in dirs:
         Path(dir_path).mkdir(parents=True, exist_ok=True)
-    print(f"{Colors.GREEN}✓ Directories ready{Colors.ENDC}")
+    print(f"{Colors.GREEN}[OK] Directories ready{Colors.ENDC}")
 
 def print_banner():
     """Print startup banner."""
@@ -98,7 +112,7 @@ def main():
     check_dhakira()
     create_directories()
     
-    print(f"\n{Colors.GREEN}✓ All checks passed{Colors.ENDC}\n")
+    print(f"\n{Colors.GREEN}[OK] All checks passed{Colors.ENDC}\n")
     
     # Configuration
     host = os.getenv('HOST', '0.0.0.0')

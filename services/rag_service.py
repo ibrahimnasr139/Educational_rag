@@ -64,6 +64,23 @@ class RAGService:
             except Exception as e:
                 logger.warning(f"Failed to initialize OpenAI fallback: {e}")
 
+        # Always initialize Gemini client as a fallback — even when OpenAI is the primary provider.
+        # This prevents AttributeError in quota-exceeded fallback paths.
+        self.gemini_client = None
+        self.gemini_model_name = None
+        self.gemini_config = None
+        if getattr(settings, "google_api_key", None):
+            try:
+                self.gemini_client = genai.Client(api_key=settings.google_api_key)
+                self.gemini_model_name = settings.gemini_model
+                self.gemini_config = types.GenerateContentConfig(
+                    temperature=self.generation_config.get("temperature"),
+                    max_output_tokens=self.generation_config.get("max_output_tokens")
+                )
+                logger.info(f"Gemini client initialized ({settings.gemini_model})")
+            except Exception as e:
+                logger.warning(f"Gemini client initialization failed: {e}")
+
         if self.provider == "openai" and self.openai_llm:
             self.llm = self.openai_llm
             logger.info(f"RAG Service default initialized with OpenAI ({settings.openai_model})")
@@ -71,16 +88,8 @@ class RAGService:
             if self.provider == "openai" and not self.openai_llm:
                 logger.warning("LLM provider is set to 'openai' but OpenAI fallback is unavailable; falling back to Gemini")
                 self.provider = "gemini"
-            # Configure Google Gemini
-            self.gemini_client = genai.Client(api_key=settings.google_api_key)
-            self.gemini_model_name = settings.gemini_model
-            
-            # Map old generation_config to new GenerateContentConfig
-            self.gemini_config = types.GenerateContentConfig(
-                temperature=self.generation_config.get("temperature"),
-                max_output_tokens=self.generation_config.get("max_output_tokens")
-            )
-            
+            if not self.gemini_client:
+                raise RuntimeError("Neither OpenAI nor Gemini could be initialized. Check API keys.")
             logger.info(f"RAG Service default initialized with Gemini ({settings.gemini_model})")
     
     async def retrieve_context(

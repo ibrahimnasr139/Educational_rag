@@ -66,3 +66,7 @@ temp/
 
 # Dhakira (if cloned locally)
 Dhakira/
+
+# Large local test/demo files
+videoplayback.mp4
+*.mp4
