@@ -84,10 +84,10 @@ class DatabaseService:
                         type=file_type,
                         size=size or 0,
                         url=url or "",
-                        storage_provider="local",
+                        storage_provider="Local",
                         metadata_=metadata,
                         status="processing",
-                        uploaded_by=uploaded_by_id,
+                        uploaded_by=uploaded_by_id or "d521a6ac-157e-4719-8964-b9f6bf1cf389",
                         tenant_id=None
                     )
                     session.add(db_file)
@@ -103,10 +103,10 @@ class DatabaseService:
                 if db_metadata is None:
                     db_metadata = Metadata(file_id=file_id)
                     session.add(db_metadata)
-                db_metadata.subject = subject or metadata.get("subject")
-                db_metadata.grade_level = grade_level or metadata.get("grade_level") or metadata.get("grade")
-                db_metadata.semester = semester or metadata.get("semester") or metadata.get("term")
-                db_metadata.is_course_book = is_course_book
+                db_metadata.subject = subject or (metadata or {}).get("subject") or "General"
+                db_metadata.grade_level = grade_level or (metadata or {}).get("grade_level") or (metadata or {}).get("grade") or "General"
+                db_metadata.semester = semester or (metadata or {}).get("semester") or (metadata or {}).get("term") or "General"
+                db_metadata.is_course_book = bool(is_course_book)
 
                 session.commit()
                 logger.info(f"Saved file and metadata for {file_id}")

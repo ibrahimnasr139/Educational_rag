@@ -15,6 +15,110 @@ from utils.language_detector import language_detector
 logger = logging.getLogger(__name__)
 
 
+# Monkey-patch OpenAILLM to fail fast on permanent quota errors (insufficient_quota)
+try:
+    from dhakira.llm.openai_ import OpenAILLM
+    import asyncio
+    import json
+    
+    def patched_get_client(self):
+        if self._client is None:
+            from openai import AsyncOpenAI
+
+            kwargs = {}
+            if self.config.api_key:
+                kwargs["api_key"] = self.config.api_key
+            if self.config.base_url:
+                kwargs["base_url"] = self.config.base_url
+            kwargs["max_retries"] = 0
+
+            self._client = AsyncOpenAI(**kwargs)
+        return self._client
+
+    async def patched_generate(self, prompt: str, system: str | None = None) -> str:
+        client = self._get_client()
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        for attempt in range(4):
+            try:
+                if attempt > 0:
+                    wait = min(2 ** attempt, 8)
+                    logger.info("Rate limited, retrying in %ss (attempt %s)", wait, attempt + 1)
+                    await asyncio.sleep(wait)
+
+                response = await client.chat.completions.create(
+                    model=self.config.model,
+                    messages=messages,
+                    temperature=self.config.temperature,
+                    max_tokens=self.config.max_tokens,
+                )
+                if response.usage:
+                    self._track_usage(response.usage.prompt_tokens, response.usage.completion_tokens)
+                return response.choices[0].message.content or ""
+            except Exception as e:
+                if "insufficient_quota" in str(e).lower():
+                    raise
+                if "429" in str(e) and attempt < 3:
+                    continue
+                raise
+
+    async def patched_generate_structured(self, prompt: str, schema: dict, system: str | None = None) -> dict:
+        client = self._get_client()
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        for attempt in range(4):
+            try:
+                if attempt > 0:
+                    wait = min(2 ** attempt, 8)
+                    logger.info("Rate limited, retrying in %ss (attempt %s)", wait, attempt + 1)
+                    await asyncio.sleep(wait)
+
+                response = await client.chat.completions.create(
+                    model=self.config.model,
+                    messages=messages,
+                    temperature=self.config.temperature,
+                    max_tokens=self.config.max_tokens,
+                    response_format={"type": "json_object"},
+                )
+                if response.usage:
+                    self._track_usage(response.usage.prompt_tokens, response.usage.completion_tokens)
+
+                content = response.choices[0].message.content or "{}"
+                cleaned = content.strip()
+                if cleaned.startswith("```json"):
+                    cleaned = cleaned[7:]
+                elif cleaned.startswith("```"):
+                    cleaned = cleaned[3:]
+                if cleaned.endswith("```"):
+                    cleaned = cleaned[:-3]
+                cleaned = cleaned.strip()
+
+                try:
+                    return json.loads(cleaned)
+                except json.JSONDecodeError:
+                    logger.warning("Failed to parse structured LLM response: %s", content[:200])
+                    return {}
+            except Exception as e:
+                if "insufficient_quota" in str(e).lower():
+                    raise
+                if "429" in str(e) and attempt < 3:
+                    continue
+                raise
+
+    OpenAILLM._get_client = patched_get_client
+    OpenAILLM.generate = patched_generate
+    OpenAILLM.generate_structured = patched_generate_structured
+    logger.info("Monkey-patched dhakira OpenAILLM to fail fast on insufficient_quota")
+except Exception as patch_err:
+    logger.warning(f"Could not monkey-patch OpenAILLM: {patch_err}")
+
+
 class RAGService:
     """
     Retrieval-Augmented Generation service.
