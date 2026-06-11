@@ -34,13 +34,14 @@ class EmbeddingService:
     Provides efficient embedding creation and retrieval.
     """
     
-    def __init__(self, db_path: str = "./data/chroma_db"):
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = db_path or settings.vector_db_path
         self.client = None
         self.model = None
         self.model_type = None  # Track model type: 'dhakira' or 'sentence_transformer'
         self._fallback_model = None
         self._openai_client = None
+        self._embedding_dimension = None
         
         # Initialize ChromaDB client
         self._init_chroma_client()
@@ -73,6 +74,7 @@ class EmbeddingService:
                 )
                 self.model = Memory(config=dhakira_config)
                 self.model_type = "dhakira"
+                self._embedding_dimension = getattr(dhakira_config.embeddings, "dim", 128)
                 logger.info("Dhakira Memory model loaded successfully")
                 return
             except Exception as e:
@@ -96,6 +98,7 @@ class EmbeddingService:
         self._openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
         self.model_type = "openai"
         self.model = self._openai_client
+        self._embedding_dimension = self._configured_openai_dimension()
         logger.info(f"OpenAI embeddings initialized: {settings.openai_embedding_model}")
     
     def _init_fallback_model(self):
@@ -114,11 +117,13 @@ class EmbeddingService:
             self.model = SentenceTransformer(settings.embedding_model, device=device)
             self.model_type = "sentence_transformer"
             self._fallback_model = self.model  # Store reference for emergency fallback
+            self._embedding_dimension = self._get_sentence_transformer_dimension(self.model)
             logger.info(f"Fallback model loaded on {device}")
         except ImportError:
             self.model = SentenceTransformer(settings.embedding_model)
             self.model_type = "sentence_transformer"
             self._fallback_model = self.model  # Store reference for emergency fallback
+            self._embedding_dimension = self._get_sentence_transformer_dimension(self.model)
             logger.info("Fallback model loaded (CPU)")
     
     def _init_chroma_client(self):
@@ -135,13 +140,43 @@ class EmbeddingService:
         
         logger.info("ChromaDB initialized successfully")
 
-    def _effective_collection_name(self, collection_name: str) -> str:
+    def _configured_openai_dimension(self) -> int:
+        model_name = (settings.openai_embedding_model or "").lower()
+        if "3-large" in model_name:
+            return 3072
+        return 1536
+
+    def _get_sentence_transformer_dimension(self, model) -> int:
+        try:
+            dimension = model.get_sentence_embedding_dimension()
+            if dimension:
+                return int(dimension)
+        except Exception:
+            pass
+        return 384
+
+    def _configured_embedding_dimension(self) -> int:
+        provider = (settings.embedding_provider or "sentence_transformer").lower()
+        if provider == "openai":
+            return self._configured_openai_dimension()
+        if provider == "dhakira":
+            return 128
+        return 384
+
+    def _set_embedding_dimension_from_vectors(self, embeddings: List[List[float]]):
+        for embedding in embeddings:
+            if embedding:
+                self._embedding_dimension = len(embedding)
+                return
+
+    def _effective_collection_name(self, collection_name: str, dimension: Optional[int] = None) -> str:
         """Avoid mixing embeddings with incompatible dimensions in one collection."""
-        if collection_name == "documents" and (settings.embedding_provider or "").lower() == "openai":
-            return "documents_openai"
+        if collection_name == "documents":
+            dim = dimension or self._embedding_dimension or self._configured_embedding_dimension()
+            return f"{collection_name}_{dim}"
         return collection_name
     
-    def get_or_create_collection(self, collection_name: str = "documents"):
+    def get_or_create_collection(self, collection_name: str = "documents", dimension: Optional[int] = None):
         """
         Get or create a collection in ChromaDB.
         
@@ -152,7 +187,7 @@ class EmbeddingService:
             ChromaDB collection
         """
         try:
-            collection_name = self._effective_collection_name(collection_name)
+            collection_name = self._effective_collection_name(collection_name, dimension)
             collection = self.client.get_or_create_collection(
                 name=collection_name,
                 metadata={"hnsw:space": "cosine"}
@@ -187,25 +222,35 @@ class EmbeddingService:
                 
                 try:
                     embedding = await asyncio.to_thread(self.model.embed, text)
+                    if embedding:
+                        self._embedding_dimension = len(embedding)
                 except Exception as dhakira_error:
                     logger.warning(f"Dhakira embedding failed, falling back: {dhakira_error}")
                     embedding = []
                 
                 # Fallback to sentence transformer if Dhakira fails
-                if not embedding and hasattr(self, '_fallback_model'):
+                if not embedding:
+                    self._init_fallback_model()
                     encoded = await asyncio.to_thread(self._fallback_model.encode, text, convert_to_numpy=True)
                     embedding = encoded.tolist()
+                    if embedding:
+                        self.model_type = "sentence_transformer"
+                        self._embedding_dimension = len(embedding)
             else:
                 if self.model_type == "openai":
                     response = await self._openai_client.embeddings.create(
                         model=settings.openai_embedding_model,
                         input=text
                     )
-                    return response.data[0].embedding
+                    embedding = response.data[0].embedding
+                    self._embedding_dimension = len(embedding)
+                    return embedding
 
                 # SentenceTransformer fallback
                 encoded = await asyncio.to_thread(self.model.encode, text, convert_to_numpy=True)
                 embedding = encoded.tolist()
+                if embedding:
+                    self._embedding_dimension = len(embedding)
             
             return embedding
             
@@ -239,6 +284,7 @@ class EmbeddingService:
                 
                 try:
                     embeddings_valid = await asyncio.to_thread(self.model.embed_batch, valid_texts)
+                    self._set_embedding_dimension_from_vectors(embeddings_valid)
                     # Map back to original texts to maintain length
                     embeddings = []
                     valid_idx = 0
@@ -251,22 +297,25 @@ class EmbeddingService:
                     return embeddings
                 except Exception as dhakira_error:
                     logger.warning(f"Dhakira batch embedding failed, falling back: {dhakira_error}")
-                    if hasattr(self, '_fallback_model'):
-                        encoded = await asyncio.to_thread(self._fallback_model.encode, texts, convert_to_numpy=True)
-                        embeddings = encoded.tolist()
-                    else:
-                        embeddings = [[] for _ in texts]
+                    self._init_fallback_model()
+                    encoded = await asyncio.to_thread(self._fallback_model.encode, texts, convert_to_numpy=True)
+                    embeddings = encoded.tolist()
+                    self.model_type = "sentence_transformer"
+                    self._set_embedding_dimension_from_vectors(embeddings)
             else:
                 if self.model_type == "openai":
                     response = await self._openai_client.embeddings.create(
                         model=settings.openai_embedding_model,
                         input=texts
                     )
-                    return [item.embedding for item in response.data]
+                    embeddings = [item.embedding for item in response.data]
+                    self._set_embedding_dimension_from_vectors(embeddings)
+                    return embeddings
 
                 # SentenceTransformer batch embedding
                 encoded = await asyncio.to_thread(self.model.encode, texts, convert_to_numpy=True)
                 embeddings = encoded.tolist()
+                self._set_embedding_dimension_from_vectors(embeddings)
             
             logger.info(f"Generated {len(embeddings)} embeddings")
             return embeddings
@@ -297,10 +346,10 @@ class EmbeddingService:
             List of document IDs
         """
         try:
-            collection = self.get_or_create_collection(collection_name)
-            
             # Generate embeddings
             embeddings = await self.embed_batch(texts)
+            self._set_embedding_dimension_from_vectors(embeddings)
+            collection = self.get_or_create_collection(collection_name, self._embedding_dimension)
             
             if settings.save_chunks_to_postgres:
                 from services.database_service import database_service
@@ -371,13 +420,12 @@ class EmbeddingService:
             List of search results with text, metadata, and scores
         """
         try:
-            collection = self.get_or_create_collection(collection_name)
-            
             # Generate query embedding
             query_embedding = await self.embed_text(query)
             
             if not query_embedding:
                 return []
+            collection = self.get_or_create_collection(collection_name, len(query_embedding))
 
             clean_filter = {k: v for k, v in (filter_metadata or {}).items() if v not in (None, '', [], {})}
 
