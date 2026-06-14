@@ -202,6 +202,10 @@ class DatabaseService:
         with self.get_session() as session:
             return session.query(Files).filter(Files.id == file_id).first() is not None
 
+    def file_has_chunks(self, file_id: str) -> bool:
+        with self.get_session() as session:
+            return session.query(FileChunks.id).filter(FileChunks.file_id == file_id).first() is not None
+
     def save_chunks(self, file_id: str, chunks: list, embeddings: list, model_name: str, metadatas: list | None = None, start_idx: int = 0):
         with self.get_session() as session:
             try:

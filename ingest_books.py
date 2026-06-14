@@ -212,10 +212,11 @@ async def ingest_all():
         import hashlib
         file_id = "book-" + hashlib.md5(book_name.encode("utf-8")).hexdigest()[:16]
 
-        # RESUME CHECK: Skip if file already exists in DB
+        # RESUME CHECK: Skip only when chunks already exist.
+        # A file row without chunks means a previous ingestion stopped before embedding.
         try:
-            if database_service.file_exists(file_id):
-                logger.info(f"[{idx}/{total}] Skipping {book_name} (already processed)")
+            if database_service.file_has_chunks(file_id):
+                logger.info(f"[{idx}/{total}] Skipping {book_name} (chunks already exist)")
                 skipped += 1
                 continue
         except Exception:
