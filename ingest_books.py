@@ -48,18 +48,23 @@ SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 # ──────────────────────────────────────────────────────────────────────────
 
 def clear_chroma():
-    """Delete all documents from the ChromaDB 'documents' collection."""
+    """Delete all dimension-specific Chroma document collections."""
     from services.embedding_service import embedding_service
     try:
         client = embedding_service.client
-        try:
-            client.delete_collection("documents")
-            logger.info("✓ Deleted Chroma collection 'documents'")
-        except Exception:
-            logger.info("  Chroma collection 'documents' did not exist – skipping")
-        # Recreate empty collection so the service is ready
+        deleted = 0
+        for collection in client.list_collections():
+            if collection.name == "documents" or collection.name.startswith("documents_"):
+                client.delete_collection(collection.name)
+                deleted += 1
+                logger.info(f"Deleted Chroma collection '{collection.name}'")
+
+        if deleted == 0:
+            logger.info("No Chroma document collections existed - skipping")
+
+        # Recreate the active dimension-specific collection so the service is ready.
         embedding_service.get_or_create_collection("documents")
-        logger.info("✓ Recreated empty Chroma collection 'documents'")
+        logger.info("Recreated active Chroma document collection")
     except Exception as e:
         logger.error(f"Failed to clear ChromaDB: {e}")
         raise

@@ -557,6 +557,8 @@ class RAGService:
             except Exception as e:
                 last_error = e
                 logger.error(f"Generation attempt {attempt + 1} failed: {e}")
+                if self._is_quota_error(e):
+                    raise
                 
         raise ValueError(f"Generated response was not valid JSON after {max_retries} attempts. Last error: {last_error}")
 

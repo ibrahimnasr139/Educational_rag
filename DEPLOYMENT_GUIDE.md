@@ -56,13 +56,19 @@ TEMP_PATH=./data/temp
 GOOGLE_API_KEY=your_gemini_key_here
 OPENAI_API_KEY=your_openai_key_here
 
-# LLM Providers (Choices: gemini, openai)
+# Hosted OpenAI providers for the low-memory Railway profile
 LLM_PROVIDER=openai
 ALLOW_GEMINI_FALLBACK=false
-EMBEDDING_PROVIDER=dhakira
+EMBEDDING_PROVIDER=openai
+TRANSCRIPTION_PROVIDER=openai
+OCR_PROVIDER=openai
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+KEEP_UPLOADED_FILES=false
+SAVE_TRANSCRIPT_FILES=false
+SAVE_CHUNKS_TO_POSTGRES=false
 
 # OCR
-TESSERACT_PATH=/usr/bin/tesseract  # Example Linux path (update for Windows)
+# TESSERACT_PATH is only needed when OCR_PROVIDER=local
 ```
 
 ## 4. Setting Up the Database

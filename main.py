@@ -123,8 +123,11 @@ async def health_check():
             "ocr_provider": settings.ocr_provider,
             "embedding_model": settings.embedding_model,
             "embedding_provider": settings.embedding_provider,
+            "openai_embedding_model": settings.openai_embedding_model,
             "default_language": settings.default_language,
             "llm_provider": settings.llm_provider,
+            "openai_model": settings.openai_model,
+            "allow_gemini_fallback": settings.allow_gemini_fallback,
         },
     }
 
