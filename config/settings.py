@@ -42,6 +42,7 @@ class Settings(BaseSettings):
 
     # LLM providers
     llm_provider: str = 'gemini'  # gemini | openai
+    allow_gemini_fallback: bool = False
     google_api_key: str = ''
     gemini_model: str = 'gemini-2.5-flash'
     gemini_temperature: float = 0.3

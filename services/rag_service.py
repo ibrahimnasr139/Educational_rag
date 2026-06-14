@@ -324,16 +324,16 @@ class RAGService:
                 try:
                     return await self.gpt4_nano_llm.generate(prompt=prompt, system=system_instruction)
                 except Exception as e:
-                    if self._is_quota_error(e):
-                        logger.warning(f"OpenAI quota exceeded, falling back to Gemini")
+                    if self._is_quota_error(e) and settings.allow_gemini_fallback:
+                        logger.warning("OpenAI quota exceeded, falling back to Gemini")
                         return await self._fallback_to_gemini(full_prompt)
                     raise
             elif provider_to_use == "openai" and self.openai_llm:
                 try:
                     return await self.openai_llm.generate(prompt=prompt, system=system_instruction)
                 except Exception as e:
-                    if self._is_quota_error(e):
-                        logger.warning(f"OpenAI quota exceeded, falling back to Gemini")
+                    if self._is_quota_error(e) and settings.allow_gemini_fallback:
+                        logger.warning("OpenAI quota exceeded, falling back to Gemini")
                         return await self._fallback_to_gemini(full_prompt)
                     raise
             else:
@@ -378,8 +378,8 @@ class RAGService:
                     return await self.llm.generate(prompt=full_prompt)
                 except Exception as e:
                     logger.error(f"OpenAI generation failed: {e}")
-                    if self._is_quota_error(e):
-                        logger.warning(f"OpenAI quota exceeded, falling back to Gemini")
+                    if self._is_quota_error(e) and settings.allow_gemini_fallback:
+                        logger.warning("OpenAI quota exceeded, falling back to Gemini")
                         response = self.gemini_client.models.generate_content(
                             model=self.gemini_model_name,
                             contents=full_prompt,

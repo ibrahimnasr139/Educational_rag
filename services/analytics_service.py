@@ -1,5 +1,6 @@
 from services.database_service import database_service
 from services.rag_service import rag_service
+from sqlalchemy import text
 import logging
 
 logger = logging.getLogger(__name__)
@@ -8,7 +9,7 @@ class AnalyticsService:
     
     def _execute(self, query, params=None):
         with database_service.get_session() as session:
-            result = session.execute(query, params or {})
+            result = session.execute(text(query), params or {})
             return [dict(row._mapping) for row in result.fetchall()]
 
     def get_completion_insights(self):
