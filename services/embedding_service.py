@@ -3,13 +3,17 @@ Embedding service using Dhakira RAG model.
 Handles text embedding and vector database operations.
 """
 
+import os
+
+# Avoid Chroma's Rust SQLite backend panic on incompatible/corrupted persisted DBs.
+os.environ.setdefault("CHROMA_RUST_BINDINGS_SKIP", "1")
+
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 from typing import List, Dict, Any, Optional
 import logging
 from config.settings import settings
 import hashlib
-import os
 import sys
 import asyncio
 
@@ -42,6 +46,7 @@ class EmbeddingService:
         self._fallback_model = None
         self._openai_client = None
         self._embedding_dimension = None
+        self._chroma_init_error = None
         
         # Initialize ChromaDB client
         self._init_chroma_client()
@@ -129,16 +134,41 @@ class EmbeddingService:
     def _init_chroma_client(self):
         """Initialize ChromaDB persistent client."""
         logger.info(f"Initializing ChromaDB at {self.db_path}")
-        
-        self.client = chromadb.PersistentClient(
-            path=self.db_path,
-            settings=ChromaSettings(
-                anonymized_telemetry=False,
-                allow_reset=True
+
+        try:
+            self.client = chromadb.PersistentClient(
+                path=self.db_path,
+                settings=ChromaSettings(
+                    anonymized_telemetry=False,
+                    allow_reset=True
+                )
             )
-        )
-        
-        logger.info("ChromaDB initialized successfully")
+            self._chroma_init_error = None
+            logger.info("ChromaDB initialized successfully")
+        except (KeyboardInterrupt, SystemExit, GeneratorExit):
+            raise
+        except BaseException as e:
+            self.client = None
+            self._chroma_init_error = e
+            logger.exception(
+                "ChromaDB failed to initialize. If this is a Rust bindings panic, "
+                "reinstall dependencies with chromadb==0.5.23 and recreate the "
+                "persisted vector DB at %s if it was written by an incompatible version.",
+                self.db_path,
+            )
+
+    def _ensure_chroma_client(self):
+        """Return an initialized ChromaDB client or raise a clear service error."""
+        if self.client is None:
+            if self._chroma_init_error is None:
+                self._init_chroma_client()
+            if self.client is None:
+                raise RuntimeError(
+                    "ChromaDB is unavailable. Reinstall with chromadb==0.5.23; "
+                    f"if the persisted database is incompatible, delete '{self.db_path}' "
+                    "and reprocess the documents."
+                ) from self._chroma_init_error
+        return self.client
 
     def _configured_openai_dimension(self) -> int:
         model_name = (settings.openai_embedding_model or "").lower()
@@ -188,7 +218,8 @@ class EmbeddingService:
         """
         try:
             collection_name = self._effective_collection_name(collection_name, dimension)
-            collection = self.client.get_or_create_collection(
+            client = self._ensure_chroma_client()
+            collection = client.get_or_create_collection(
                 name=collection_name,
                 metadata={"hnsw:space": "cosine"}
             )
