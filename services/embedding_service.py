@@ -162,6 +162,17 @@ class EmbeddingService:
                 except BaseException as retry_error:
                     self._clear_chroma_system_cache()
                     e = retry_error
+            elif self._switch_to_recovered_chroma_db():
+                try:
+                    self.client = self._create_chroma_client()
+                    self._chroma_init_error = None
+                    logger.info("ChromaDB initialized successfully using recovered DB path %s", self.db_path)
+                    return
+                except (KeyboardInterrupt, SystemExit, GeneratorExit):
+                    raise
+                except BaseException as retry_error:
+                    self._clear_chroma_system_cache()
+                    e = retry_error
 
             self.client = None
             self._chroma_init_error = e
@@ -207,6 +218,25 @@ class EmbeddingService:
         except OSError:
             logger.exception("Failed to move incompatible ChromaDB directory at %s", db_path)
             return False
+
+    def _switch_to_recovered_chroma_db(self) -> bool:
+        current_path = os.path.abspath(self.db_path)
+        parent_dir = os.path.dirname(current_path)
+        base_name = os.path.basename(current_path.rstrip(os.sep))
+        recovered_path = os.path.join(parent_dir, f"{base_name}_recovered")
+
+        if current_path == recovered_path:
+            return False
+
+        os.makedirs(recovered_path, exist_ok=True)
+        logger.warning(
+            "Using fresh ChromaDB recovery directory at %s because %s could not be moved. "
+            "Documents must be reprocessed to rebuild vector search.",
+            recovered_path,
+            current_path,
+        )
+        self.db_path = recovered_path
+        return True
 
     def _ensure_chroma_client(self):
         """Return an initialized ChromaDB client or raise a clear service error."""
