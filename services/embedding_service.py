@@ -4,6 +4,7 @@ Handles text embedding and vector database operations.
 """
 
 import os
+import shutil
 
 # Avoid Chroma's Rust SQLite backend panic on incompatible/corrupted persisted DBs.
 os.environ.setdefault("CHROMA_RUST_BINDINGS_SKIP", "1")
@@ -16,6 +17,7 @@ from config.settings import settings
 import hashlib
 import sys
 import asyncio
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -136,37 +138,86 @@ class EmbeddingService:
         logger.info(f"Initializing ChromaDB at {self.db_path}")
 
         try:
-            self.client = chromadb.PersistentClient(
-                path=self.db_path,
-                settings=ChromaSettings(
-                    anonymized_telemetry=False,
-                    allow_reset=True
-                )
-            )
+            self.client = self._create_chroma_client()
             self._chroma_init_error = None
             logger.info("ChromaDB initialized successfully")
         except (KeyboardInterrupt, SystemExit, GeneratorExit):
             raise
         except BaseException as e:
+            self._clear_chroma_system_cache()
+            logger.exception(
+                "ChromaDB failed to initialize at %s. Attempting to quarantine "
+                "the persisted DB and recreate it. Original error: %r",
+                self.db_path,
+                e,
+            )
+            if self._quarantine_chroma_db():
+                try:
+                    self.client = self._create_chroma_client()
+                    self._chroma_init_error = None
+                    logger.info("ChromaDB initialized successfully after recreating the persisted DB")
+                    return
+                except (KeyboardInterrupt, SystemExit, GeneratorExit):
+                    raise
+                except BaseException as retry_error:
+                    self._clear_chroma_system_cache()
+                    e = retry_error
+
             self.client = None
             self._chroma_init_error = e
             logger.exception(
-                "ChromaDB failed to initialize. If this is a Rust bindings panic, "
-                "reinstall dependencies with chromadb==0.5.23 and recreate the "
-                "persisted vector DB at %s if it was written by an incompatible version.",
+                "ChromaDB is still unavailable after recovery attempt at %s. "
+                "Ensure chromadb==0.5.23 is installed and check the original error above.",
                 self.db_path,
             )
+
+    def _create_chroma_client(self):
+        return chromadb.PersistentClient(
+            path=self.db_path,
+            settings=ChromaSettings(
+                anonymized_telemetry=False,
+                allow_reset=True
+            )
+        )
+
+    def _clear_chroma_system_cache(self):
+        try:
+            from chromadb.api.shared_system_client import SharedSystemClient
+            SharedSystemClient.clear_system_cache()
+        except Exception:
+            logger.debug("Unable to clear ChromaDB system cache", exc_info=True)
+
+    def _quarantine_chroma_db(self) -> bool:
+        db_path = os.path.abspath(self.db_path)
+        if not os.path.exists(db_path):
+            return False
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        quarantine_path = f"{db_path}.incompatible.{timestamp}"
+
+        try:
+            shutil.move(db_path, quarantine_path)
+            logger.warning(
+                "Moved incompatible ChromaDB directory from %s to %s. "
+                "Documents must be reprocessed to rebuild vector search.",
+                db_path,
+                quarantine_path,
+            )
+            return True
+        except OSError:
+            logger.exception("Failed to move incompatible ChromaDB directory at %s", db_path)
+            return False
 
     def _ensure_chroma_client(self):
         """Return an initialized ChromaDB client or raise a clear service error."""
         if self.client is None:
-            if self._chroma_init_error is None:
-                self._init_chroma_client()
+            self._init_chroma_client()
             if self.client is None:
+                cause = repr(self._chroma_init_error) if self._chroma_init_error else "unknown"
                 raise RuntimeError(
                     "ChromaDB is unavailable. Reinstall with chromadb==0.5.23; "
-                    f"if the persisted database is incompatible, delete '{self.db_path}' "
-                    "and reprocess the documents."
+                    f"if the persisted database is incompatible, remove '{self.db_path}' "
+                    f"and reprocess the documents. Last error: {cause}"
                 ) from self._chroma_init_error
         return self.client
 
