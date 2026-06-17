@@ -90,6 +90,23 @@ def create_directories():
         Path(dir_path).mkdir(parents=True, exist_ok=True)
     print(f"{Colors.GREEN}[OK] Directories ready{Colors.ENDC}")
 
+def configure_local_vector_db():
+    """Use a fresh local vector DB when the default Chroma store is incompatible."""
+    if os.getenv("VECTOR_DB_PATH"):
+        return
+
+    default_db = Path("data/chroma_db")
+    recovered_db = Path("data/chroma_db_recovered")
+    sqlite_file = default_db / "chroma.sqlite3"
+
+    if sqlite_file.exists():
+        recovered_db.mkdir(parents=True, exist_ok=True)
+        os.environ["VECTOR_DB_PATH"] = str(recovered_db).replace("\\", "/")
+        print(
+            f"{Colors.YELLOW}[WARN] Using {os.environ['VECTOR_DB_PATH']} for ChromaDB "
+            f"because the default store may be incompatible{Colors.ENDC}"
+        )
+
 def print_banner():
     """Print startup banner."""
     print("\n" + "="*60)
@@ -111,6 +128,7 @@ def main():
     
     check_dhakira()
     create_directories()
+    configure_local_vector_db()
     
     print(f"\n{Colors.GREEN}[OK] All checks passed{Colors.ENDC}\n")
     
