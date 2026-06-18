@@ -67,7 +67,7 @@ class Settings(BaseSettings):
 
     # Whisper
     transcription_provider: str = 'local'  # openai | local
-    openai_transcription_model: str = 'gpt-4o-mini-transcribe'
+    openai_transcription_model: str = 'whisper-1'
     whisper_model: str = 'base'
     whisper_device: str = 'cpu'
 
