@@ -96,7 +96,7 @@ class QuestionService:
                 if request.metadata.semester:
                     metadata_filter["semester"] = request.metadata.semester
                 if request.metadata.is_course_book:
-                    metadata_filter["is_course_book"] = True
+                    metadata_filter["is_course_book"] = "true"
 
             context = await self.rag.retrieve_with_metadata(
                 query=search_query,
@@ -207,7 +207,19 @@ Return JSON only."""
                     raw_opts = q_data.get("options", []) or []
                     options = [QuestionOption(**opt) for opt in raw_opts if isinstance(opt, dict)]
                     options = self._ensure_options(options)
-                    correct_answer = q_data.get("correctAnswer") or next((o.id for o in options if o.isCorrect), options[0].id)
+
+                    # --- Enforce o1/o2/o3/o4 IDs and keep correctAnswer in sync ---
+                    old_correct_id = q_data.get("correctAnswer") or next(
+                        (o.id for o in options if o.isCorrect), None
+                    )
+                    for i, opt in enumerate(options, 1):
+                        old_id = opt.id
+                        opt.id = f"o{i}"
+                        # If correctAnswer was pointing to this old ID, update it
+                        if old_correct_id == old_id:
+                            old_correct_id = opt.id
+
+                    correct_answer = old_correct_id or options[0].id
                 elif q_type == QuestionType.TRUE_FALSE.value:
                     correct_answer = str(q_data.get("correctAnswer", "true")).lower()
                     if correct_answer not in {"true", "false"}:

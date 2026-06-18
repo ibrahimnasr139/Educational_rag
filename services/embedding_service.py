@@ -18,6 +18,7 @@ import hashlib
 import sys
 import asyncio
 from datetime import datetime, timezone
+from utils.metadata_extractor import compact_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -494,7 +495,8 @@ class EmbeddingService:
 
             valid_ids = [ids[i] for i, _, _, _ in valid_items]
             valid_texts = [text for _, text, _, _ in valid_items]
-            valid_metadatas = [meta for _, _, meta, _ in valid_items]
+            # Stringify all metadata values before storing so ChromaDB filters work predictably
+            valid_metadatas = [compact_metadata(meta) for _, _, meta, _ in valid_items]
             valid_embeddings = [emb for _, _, _, emb in valid_items]
 
             # Upsert keeps repeated processing of the same fileId idempotent.
@@ -539,7 +541,7 @@ class EmbeddingService:
                 return []
             collection = self.get_or_create_collection(collection_name, len(query_embedding))
 
-            clean_filter = {k: v for k, v in (filter_metadata or {}).items() if v not in (None, '', [], {})}
+            clean_filter = compact_metadata(filter_metadata) if filter_metadata else {}
 
             # Search asynchronously
             results = await asyncio.to_thread(

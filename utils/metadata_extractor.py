@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 
 def _normalize_ar(text: str) -> str:
@@ -67,6 +67,19 @@ def extract_metadata_from_filename(filename: str) -> Dict[str, Optional[str]]:
     }
 
 
-def compact_metadata(metadata: Dict[str, Optional[str]]) -> Dict[str, str]:
-    """Remove empty metadata values and keep Chroma-friendly primitive values."""
-    return {k: v for k, v in (metadata or {}).items() if v not in (None, '', [], {})}
+def compact_metadata(metadata: Dict[str, Any]) -> Dict[str, str]:
+    """Remove empty metadata values and stringify all remaining values for ChromaDB compatibility.
+
+    ChromaDB requires metadata values to be primitive strings/numbers/booleans.
+    We normalise everything to strings so filters behave predictably
+    (e.g. is_course_book: "true" instead of boolean True).
+    """
+    result: Dict[str, str] = {}
+    for k, v in (metadata or {}).items():
+        if v in (None, '', [], {}):
+            continue
+        if isinstance(v, bool):
+            result[k] = "true" if v else "false"
+        else:
+            result[k] = str(v)
+    return result

@@ -11,6 +11,7 @@ import json
 from config.settings import settings
 from services.embedding_service import embedding_service
 from utils.language_detector import language_detector
+from utils.metadata_extractor import compact_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -241,10 +242,10 @@ class RAGService:
         """
         from utils.query_metadata_extractor import extract_query_metadata
         
-        # 1. Extract and merge filters
+        # 1. Extract and merge filters, then stringify all values for consistent ChromaDB querying
         extracted = extract_query_metadata(query)
         filters = {**extracted, **(metadata_filter or {})}
-        filters = {k: v for k, v in filters.items() if v not in (None, '', [], {})}
+        filters = compact_metadata(filters)
 
         # 2. Semantic Search (ChromaDB)
         # We fetch more than top_k to allow re-ranking
