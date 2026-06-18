@@ -149,9 +149,23 @@ class AudioService:
             transcript_text = result.get("text", "").strip()
             detected_language = result.get("language", language or "unknown")
             was_translated = translate_to_english
+            
+            final_language = "en" if was_translated else detected_language
+            if final_language.lower() in ["arabic", "ar"]:
+                final_language = "ar"
+            elif final_language.lower() in ["english", "en"]:
+                final_language = "en"
+            elif final_language.lower() in ["french", "fr"]:
+                final_language = "fr"
+            elif final_language.lower() in ["spanish", "es"]:
+                final_language = "es"
+            else:
+                from utils.language_detector import language_detector
+                final_language = language_detector.detect_language(transcript_text)
+                
             return {
                 "text": transcript_text,
-                "language": "en" if was_translated else detected_language,
+                "language": final_language,
                 "translated": was_translated,
                 "original_language": detected_language,
                 "segments": result.get("segments", [])
@@ -169,6 +183,19 @@ class AudioService:
         detected_language = result.get("language", "unknown")
         was_translated    = translate_to_english and detected_language != "en"
 
+        final_language = "en" if was_translated else detected_language
+        if final_language.lower() in ["arabic", "ar"]:
+            final_language = "ar"
+        elif final_language.lower() in ["english", "en"]:
+            final_language = "en"
+        elif final_language.lower() in ["french", "fr"]:
+            final_language = "fr"
+        elif final_language.lower() in ["spanish", "es"]:
+            final_language = "es"
+        else:
+            from utils.language_detector import language_detector
+            final_language = language_detector.detect_language(transcript_text)
+
         logger.info(
             f"Transcription done | chars={len(transcript_text)} "
             f"| detected_lang={detected_language} | translated={was_translated}"
@@ -176,7 +203,7 @@ class AudioService:
 
         return {
             "text":              transcript_text,
-            "language":          "en" if was_translated else detected_language,
+            "language":          final_language,
             "translated":        was_translated,
             "original_language": detected_language,
             "segments":          result.get("segments", [])
@@ -241,16 +268,25 @@ class AudioService:
                 kwargs = {
                     "model": settings.openai_transcription_model,
                     "file": audio_file,
+                    "response_format": "verbose_json",
                 }
                 if language and not translate_to_english:
                     kwargs["language"] = language
-                if settings.openai_transcription_model == "whisper-1":
-                    kwargs["response_format"] = "verbose_json"
 
-                if translate_to_english and settings.openai_transcription_model == "whisper-1":
-                    response = client.audio.translations.create(**kwargs)
-                else:
-                    response = client.audio.transcriptions.create(**kwargs)
+                try:
+                    if translate_to_english:
+                        response = client.audio.translations.create(**kwargs)
+                    else:
+                        response = client.audio.transcriptions.create(**kwargs)
+                except Exception as e:
+                    logger.warning(
+                        f"OpenAI transcription with verbose_json failed, retrying without it: {e}"
+                    )
+                    kwargs.pop("response_format", None)
+                    if translate_to_english:
+                        response = client.audio.translations.create(**kwargs)
+                    else:
+                        response = client.audio.transcriptions.create(**kwargs)
 
             if hasattr(response, "model_dump"):
                 data = response.model_dump()
