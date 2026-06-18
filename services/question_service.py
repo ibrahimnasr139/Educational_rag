@@ -205,21 +205,34 @@ Return JSON only."""
                 options = None
                 if q_type == QuestionType.MCQ.value:
                     raw_opts = q_data.get("options", []) or []
-                    options = [QuestionOption(**opt) for opt in raw_opts if isinstance(opt, dict)]
+
+                    options = [
+                        QuestionOption(**opt)
+                        for opt in raw_opts
+                        if isinstance(opt, dict)
+                    ]
+
                     options = self._ensure_options(options)
 
-                    # --- Enforce o1/o2/o3/o4 IDs and keep correctAnswer in sync ---
-                    old_correct_id = q_data.get("correctAnswer") or next(
-                        (o.id for o in options if o.isCorrect), None
+                    correct_index = next(
+                        (idx for idx, opt in enumerate(options) if opt.isCorrect),
+                        0
                     )
-                    for i, opt in enumerate(options, 1):
-                        old_id = opt.id
-                        opt.id = f"o{i}"
-                        # If correctAnswer was pointing to this old ID, update it
-                        if old_correct_id == old_id:
-                            old_correct_id = opt.id
 
-                    correct_answer = old_correct_id or options[0].id
+                    normalized_options = []
+
+                    for idx, opt in enumerate(options[:4], start=1):
+                        normalized_options.append(
+                            QuestionOption(
+                                id=f"o{idx}",
+                                label=opt.label,
+                                isCorrect=(idx - 1 == correct_index)
+                            )
+                        )
+
+                    options = normalized_options
+
+                    correct_answer = f"o{correct_index + 1}"
                 elif q_type == QuestionType.TRUE_FALSE.value:
                     correct_answer = str(q_data.get("correctAnswer", "true")).lower()
                     if correct_answer not in {"true", "false"}:
@@ -243,12 +256,28 @@ Return JSON only."""
 
     def _ensure_options(self, existing: List[QuestionOption]) -> List[QuestionOption]:
         if not existing:
-            existing = [QuestionOption(id="o1", label="الخيار الصحيح", isCorrect=True)]
-        has_correct = any(o.isCorrect for o in existing)
+            existing = [
+                QuestionOption(
+                    id="o1",
+                    label="الخيار الصحيح",
+                    isCorrect=True
+                )
+            ]
+
+        has_correct = any(opt.isCorrect for opt in existing)
+
         if not has_correct:
             existing[0].isCorrect = True
+
         while len(existing) < 4:
-            existing.append(QuestionOption(id=f"o{len(existing)+1}", label=f"اختيار {len(existing)+1}", isCorrect=False))
+            existing.append(
+                QuestionOption(
+                    id=f"o{len(existing) + 1}",
+                    label=f"اختيار {len(existing) + 1}",
+                    isCorrect=False
+                )
+            )
+
         return existing[:4]
 
     # --------------------------- description ---------------------------

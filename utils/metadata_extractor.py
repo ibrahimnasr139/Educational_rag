@@ -66,20 +66,32 @@ def extract_metadata_from_filename(filename: str) -> Dict[str, Optional[str]]:
         'book': _find_value(clean, BOOK_RULES),
     }
 
-
-def compact_metadata(metadata: Dict[str, Any]) -> Dict[str, str]:
-    """Remove empty metadata values and stringify all remaining values for ChromaDB compatibility.
-
-    ChromaDB requires metadata values to be primitive strings/numbers/booleans.
-    We normalise everything to strings so filters behave predictably
-    (e.g. is_course_book: "true" instead of boolean True).
+def compact_metadata(metadata: Dict[str, Any] | None) -> Dict[str, str]:
     """
+    Convert all metadata values to strings because
+    ChromaDB filtering becomes more predictable when
+    keys and values are stored as strings only.
+    """
+
+    if not metadata:
+        return {}
+
     result: Dict[str, str] = {}
-    for k, v in (metadata or {}).items():
-        if v in (None, '', [], {}):
+
+    for key, value in metadata.items():
+        if value is None:
             continue
-        if isinstance(v, bool):
-            result[k] = "true" if v else "false"
+
+        if isinstance(value, bool):
+            result[str(key)] = "true" if value else "false"
+
+        elif isinstance(value, (int, float)):
+            result[str(key)] = str(value)
+
+        elif isinstance(value, (list, tuple, set)):
+            result[str(key)] = ",".join(map(str, value))
+
         else:
-            result[k] = str(v)
+            result[str(key)] = str(value)
+
     return result
