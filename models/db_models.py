@@ -133,7 +133,7 @@ class Files(Base):
 
 
 class FileChunks(Base):
-    __tablename__ = "file_chunks"
+    __tablename__ = "FileChunks"
     id = Column(Integer, primary_key=True, autoincrement=True)
     file_id = Column(String, ForeignKey("Files.Id"), index=True)
     tenant_id = Column(String, nullable=True)

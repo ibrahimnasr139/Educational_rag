@@ -16,11 +16,11 @@ class AnalyticsService:
         try:
             query = """
             SELECT 
-                c.title, 
-                AVG(cp.progress_percentage) as avg_progress
-            FROM course_progress cp
-            JOIN courses c ON c.id = cp.course_id
-            GROUP BY c.title
+                c."Title" as title, 
+                AVG(CAST(cp."CompletedLessons" AS FLOAT) / NULLIF(cp."TotalLessons", 0) * 100.0) as avg_progress
+            FROM "CourseProgresses" cp
+            JOIN "Courses" c ON c."Id" = cp."CourseId"
+            GROUP BY c."Title"
             """
             return self._execute(query)
         except Exception as e:
@@ -31,11 +31,12 @@ class AnalyticsService:
         try:
             query = """
             SELECT 
-                s.full_name, 
-                AVG(g.grade) as avg_grade
-            FROM student_grades g
-            JOIN students s ON s.id = g.student_id
-            GROUP BY s.full_name
+                (u."FirstName" || ' ' || u."LastName") as full_name, 
+                AVG(CAST(g."Score" AS FLOAT) / NULLIF(g."TotalMarks", 0) * 100.0) as avg_grade
+            FROM "StudentGrades" g
+            JOIN "Students" s ON s."Id" = g."StudentId"
+            JOIN "AspNetUsers" u ON u."Id" = s."UserId"
+            GROUP BY u."FirstName", u."LastName"
             """
             return self._execute(query)
         except Exception as e:
@@ -47,9 +48,9 @@ class AnalyticsService:
             # Using DATE_TRUNC as requested (PostgreSQL)
             query = """
             SELECT 
-                DATE_TRUNC('month', created_at) as month, 
-                SUM(amount) as total_revenue
-            FROM student_subscriptions
+                DATE_TRUNC('month', "CreatedAt") as month, 
+                SUM("PricePaid") as total_revenue
+            FROM "Orders"
             GROUP BY month
             ORDER BY month DESC
             """
