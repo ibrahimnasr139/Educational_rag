@@ -75,7 +75,8 @@ class DatabaseService:
                 if semester:
                     metadata["semester"] = semester
                     metadata["term"] = semester
-                metadata["is_course_book"] = bool(is_course_book)
+                metadata["is_course_book"] = is_course_book
+                metadata = compact_metadata(metadata)
                 
                 if db_file is None:
                     db_file = Files(

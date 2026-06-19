@@ -39,6 +39,7 @@ class QuestionMetadata(BaseModel):
     grade: Optional[str] = "General"
     semester: Optional[str] = None
     is_course_book: bool = False
+    file_id: Optional[str] = None
 
 
 class QuestionOption(BaseModel):

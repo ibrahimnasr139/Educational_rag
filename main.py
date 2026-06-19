@@ -217,6 +217,8 @@ async def embed_file(
     type: str = Form(...),
     fileId: str = Form(...),
     callbackUrl: Optional[str] = Form(None),
+    semester: Optional[str] = Form(None),
+    isCourseBook: bool = Form(False),
 ):
     """Embed a document or video file for later RAG use."""
     try:
@@ -230,6 +232,8 @@ async def embed_file(
             file_id=fileId,
             job_id=job_id,
             callback_url=callbackUrl,
+            semester=semester,
+            is_course_book=isCourseBook,
         )
         return EmbedFileResponse(status="success", fileId=fileId)
     except Exception as e:

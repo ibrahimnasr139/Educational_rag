@@ -97,12 +97,20 @@ class QuestionService:
                     metadata_filter["semester"] = request.metadata.semester
                 if request.metadata.is_course_book:
                     metadata_filter["is_course_book"] = "true"
+                if request.metadata.file_id:
+                    metadata_filter["file_id"] = str(request.metadata.file_id)
 
-            context = await self.rag.retrieve_with_metadata(
+            all_context = await self.rag.retrieve_with_metadata(
                 query=search_query,
-                top_k=5,
+                top_k=10,
                 metadata_filter=metadata_filter if metadata_filter else None,
             )
+
+            context = [
+                c
+                for c in all_context
+                if c.get("score", 0) >= 0.35
+            ][:5]
 
             is_arabic = language_detector.should_use_arabic(request.prompt or search_query)
             system_instruction = self._build_system_instruction(request, is_arabic)

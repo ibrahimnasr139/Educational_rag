@@ -134,14 +134,14 @@ class Files(Base):
 
 class FileChunks(Base):
     __tablename__ = "FileChunks"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    file_id = Column(String, ForeignKey("Files.Id"), index=True)
-    tenant_id = Column(String, nullable=True)
-    text = Column(Text)
-    tokens = Column(Integer)
-    chunk_index = Column(Integer)
-    model_name = Column(String)
-    metadata_ = Column("metadata", JSON)
+    id = Column("Id", Integer, primary_key=True, autoincrement=True)
+    file_id = Column("FileId", String, ForeignKey("Files.Id"), index=True)
+    tenant_id = Column("TenantId", String, nullable=True)
+    text = Column("Text", Text)
+    tokens = Column("Tokens", Integer)
+    chunk_index = Column("ChunkIndex", Integer)
+    model_name = Column("ModelName", String)
+    metadata_ = Column("Metadata", JSON)
 
 
 class Metadata(Base):

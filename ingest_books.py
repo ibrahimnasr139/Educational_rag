@@ -74,21 +74,23 @@ def clear_chroma():
 
 
 def clear_postgres():
-    """Delete all rows from the project content tables."""
+    """Delete book-related rows from the project content tables to avoid foreign key violations."""
     from models.db_models import FileChunks, Files, Metadata, Transcripts, VideoTimestamps
     from services.database_service import database_service
 
     try:
         with database_service.get_session() as session:
-            n_chunks = session.query(FileChunks).delete()
-            n_ts = session.query(VideoTimestamps).delete()
-            n_tr = session.query(Transcripts).delete()
-            n_meta = session.query(Metadata).delete()
-            n_files = session.query(Files).delete()
+            # Delete only book chunks, transcripts, timestamps, metadata and file records
+            # to avoid breaking foreign keys from other tables like 'Lessons'
+            n_chunks = session.query(FileChunks).filter(FileChunks.file_id.like("book-%")).delete(synchronize_session=False)
+            n_ts = session.query(VideoTimestamps).filter(VideoTimestamps.file_id.like("book-%")).delete(synchronize_session=False)
+            n_tr = session.query(Transcripts).filter(Transcripts.file_id.like("book-%")).delete(synchronize_session=False)
+            n_meta = session.query(Metadata).filter(Metadata.file_id.like("book-%")).delete(synchronize_session=False)
+            n_files = session.query(Files).filter(Files.id.like("book-%")).delete(synchronize_session=False)
             session.commit()
 
         logger.info(
-            "Cleared PostgreSQL - files=%s, metadata=%s, transcripts=%s, "
+            "Cleared PostgreSQL books data - files=%s, metadata=%s, transcripts=%s, "
             "chunks=%s, timestamps=%s",
             n_files,
             n_meta,

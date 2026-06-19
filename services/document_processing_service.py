@@ -130,7 +130,7 @@ class DocumentProcessingService:
                     "book": inferred_metadata.get('book'),
                     "is_course_book": is_course_book
                 }
-                filtered_metadata = {k: v for k, v in raw_metadata.items() if v is not None}
+                filtered_metadata = compact_metadata(raw_metadata)
                 chunks = self.chunker.chunk_whisper_segments(
                     segments, 
                     metadata=filtered_metadata
@@ -402,6 +402,13 @@ class DocumentProcessingService:
         """Chunk text with metadata."""
         db_metadata = database_service.get_file_metadata(file_id) or {}
         file_meta = compact_metadata(extract_metadata_from_filename(file_id or ''))
+        
+        db_is_course_book = db_metadata.get('is_course_book')
+        if isinstance(db_is_course_book, str):
+            db_is_course_book = db_is_course_book.lower() == 'true'
+        else:
+            db_is_course_book = bool(db_is_course_book)
+
         raw_metadata = {
             "file_id": file_id,
             "file_type": file_type.value,
@@ -412,9 +419,9 @@ class DocumentProcessingService:
             "grade_level": db_metadata.get('grade_level') or file_meta.get('grade_level') or file_meta.get('grade'),
             "grade": db_metadata.get('grade_level') or file_meta.get('grade_level') or file_meta.get('grade'),
             "book": file_meta.get('book'),
-            "is_course_book": is_course_book or bool(db_metadata.get('is_course_book'))
+            "is_course_book": is_course_book or db_is_course_book
         }
-        metadata = {k: v for k, v in raw_metadata.items() if v is not None}
+        metadata = compact_metadata(raw_metadata)
         
         chunks = self.chunker.chunk_text(text, metadata)
         
