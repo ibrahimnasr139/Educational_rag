@@ -203,13 +203,11 @@ try:
 except Exception as e:
     log("POST /api/generate-quiz", FAIL, str(e))
 
-# ai-assistant — requires message, fileId, student_id, tenant_id
+# ai-assistant — requires message, fileId
 try:
     payload = {
         "message": "Can you explain photosynthesis briefly?",
         "fileId": FAKE_ID,
-        "student_id": "student-001",
-        "tenant_id": "tenant-001",
         "course": "Biology 101",
         "module": "Plants",
         "lesson": "Photosynthesis"

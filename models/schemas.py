@@ -252,8 +252,6 @@ class QuizQuestion(BaseModel):
 class AIAssistantRequest(BaseModel):
     message: str
     fileId: str
-    student_id: str
-    tenant_id: str
     course: Optional[str] = ""
     module: Optional[str] = ""
     lesson: Optional[str] = ""

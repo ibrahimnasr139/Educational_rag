@@ -422,7 +422,7 @@ Return JSON array only."""
         is_ar = language_detector.should_use_arabic(request.message)
 
         # Get conversation history
-        history = conversation_service.get_last_messages(request.student_id)
+        history = conversation_service.get_last_messages(None)
         conversation_context = ""
         for msg in history:
             conversation_context += f"{msg['role'] if isinstance(msg, dict) else msg.role}: {msg['message'] if isinstance(msg, dict) else msg.message}\n"
@@ -447,14 +447,14 @@ Answer clearly in {'Arabic' if is_ar else 'English'}. Use the transcript context
 
         # Save messages
         conversation_service.save_message(
-            request.student_id,
-            request.tenant_id,
+            None,
+            None,
             "user",
             request.message
         )
         conversation_service.save_message(
-            request.student_id,
-            request.tenant_id,
+            None,
+            None,
             "assistant",
             ai_response
         )
