@@ -25,6 +25,7 @@ from models.enums import QuestionType, DifficultyLevel
 from services.rag_service import rag_service
 from services.embedding_service import embedding_service
 from services.conversation_service import conversation_service
+from services.database_service import database_service
 from utils.language_detector import language_detector
 
 logger = logging.getLogger(__name__)
@@ -429,8 +430,16 @@ Return JSON array only."""
         return output
 
     async def ai_assistant(self, request: AIAssistantRequest) -> str:
-        chunks = embedding_service.get_all_chunks_for_file(request.fileId)
-        text_context = "\n\n".join([c.get("text", "") for c in chunks[:12]])
+        # Fetch the transcript from the Transcripts database table
+        db_transcript = database_service.get_transcript_raw(request.fileId)
+        if db_transcript and db_transcript.get("text"):
+            text_context = db_transcript["text"]
+            logger.info(f"Loaded transcript from database for file {request.fileId}")
+        else:
+            chunks = embedding_service.get_all_chunks_for_file(request.fileId)
+            text_context = "\n\n".join([c.get("text", "") for c in chunks[:12]])
+            logger.info(f"Fallback to {len(chunks)} chunks for file {request.fileId}")
+        
         is_ar = language_detector.should_use_arabic(request.message)
 
         # Get conversation history
