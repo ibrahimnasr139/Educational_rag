@@ -346,11 +346,15 @@ Requirements: 2-3 sentences, suitable for the content type, no intro, final desc
 Subject: {request.subject}
 Chapter: {request.chapter}
 Topic: {request.topic}
+Grade/Level: {request.grade or ''}
 Goal: {request.goal or ''}
 Use {'Arabic' if is_ar else 'English'}.
 Return JSON array only."""
         schema = {"type":"array","items":{"front":"string","back":"string"}}
-        raw = await self._structured(prompt, schema, "You create concise educational flashcards. Return JSON only.")
+        system_instruction = "You create concise educational flashcards. Return JSON only."
+        if request.grade:
+            system_instruction = f"You create concise educational flashcards appropriate for the {request.grade} level. Return JSON only."
+        raw = await self._structured(prompt, schema, system_instruction)
         raw = self._safe_json(raw, [])
         if isinstance(raw, dict):
             if "flashcards" in raw:
@@ -373,6 +377,7 @@ Return JSON array only."""
         context_str = self.rag._build_context_string(context_chunks) if context_chunks else ""
         
         prompt = f"""Question: {request.question}
+Grade/Level: {request.grade or ''}
 Previous answer if any: {request.previousAnswer or ''}
 Context:
 {context_str}
@@ -380,7 +385,10 @@ Context:
 If previousAnswer is provided, explain it more clearly and add examples.
 Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else 'English'}."""
         schema = {"type":"object","properties":{"question":"string","explanation":"string","examples":["string"]}}
-        raw = await self._structured(prompt, schema, "You are a helpful educational AI tutor. Return JSON only.")
+        system_instruction = "You are a helpful educational AI tutor. Return JSON only."
+        if request.grade:
+            system_instruction = f"You are a helpful educational AI tutor specialized in teaching students at the {request.grade} level. Return JSON only."
+        raw = await self._structured(prompt, schema, system_instruction)
         raw = self._safe_json(raw, {})
         return AskAIResponse(question=raw.get("question", request.question), explanation=raw.get("explanation", ""), examples=raw.get("examples", []) or [])
 
@@ -389,12 +397,16 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
         prompt = f"""Generate {request.numberOfQuestions} MCQ quiz questions.
 Subject: {request.subject}
 Chapter: {request.chapter or ''}
+Grade/Level: {request.grade or ''}
 Difficulty: {request.difficulty}
 Use {'Arabic' if is_ar else 'English'}.
 Each question must have 4 options and exactly one correct option.
 Return JSON array only."""
         schema = {"type":"array","items":{"question":"string","options":[{"text":"string","isCorrect":"boolean"}],"explanation":"string","type":"mcq"}}
-        raw = await self._structured(prompt, schema, "You generate MCQ quizzes. Return JSON only.")
+        system_instruction = "You generate MCQ quizzes. Return JSON only."
+        if request.grade:
+            system_instruction = f"You generate educational MCQ quizzes appropriate for the {request.grade} level. Return JSON only."
+        raw = await self._structured(prompt, schema, system_instruction)
         raw = self._safe_json(raw, [])
         if isinstance(raw, dict):
             if "questions" in raw:

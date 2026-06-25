@@ -204,6 +204,7 @@ class FlashcardsRequest(BaseModel):
     topic: str
     goal: Optional[str] = None
     numberOfCards: int = Field(default=10, ge=1, le=50)
+    grade: Optional[str] = ""
 
 
 class Flashcard(BaseModel):
@@ -214,6 +215,7 @@ class Flashcard(BaseModel):
 class AskAIRequest(BaseModel):
     question: str
     previousAnswer: Optional[str] = None
+    grade: Optional[str] = ""
 
 
 class AskAIResponse(BaseModel):
@@ -228,6 +230,7 @@ class GenerateQuizRequest(BaseModel):
     numberOfQuestions: int = Field(default=10, ge=1, le=50, validation_alias="questionsNumber")
     difficulty: DifficultyLevel = Field(default=DifficultyLevel.MEDIUM)
     chapter: Optional[str] = Field(default=None, validation_alias="module")
+    grade: Optional[str] = ""
 
     @field_validator("difficulty", mode="before")
     @classmethod

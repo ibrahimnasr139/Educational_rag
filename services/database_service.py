@@ -96,7 +96,18 @@ class DatabaseService:
                     db_file.name = original_name or db_file.name
                     db_file.size = size or db_file.size
                     db_file.url = url or db_file.url
-                    db_file.metadata_ = metadata
+                    
+                    # Merge metadata instead of overriding
+                    existing_meta = dict(db_file.metadata_ or {})
+                    for k, v in metadata.items():
+                        if k == "is_course_book":
+                            if v or k not in existing_meta:
+                                existing_meta[k] = v
+                        else:
+                            if v is not None and (v != "" or k not in existing_meta):
+                                existing_meta[k] = v
+                    db_file.metadata_ = compact_metadata(existing_meta)
+                    
                     if uploaded_by_id:
                         db_file.uploaded_by = uploaded_by_id
 
@@ -104,10 +115,10 @@ class DatabaseService:
                 if db_metadata is None:
                     db_metadata = Metadata(file_id=file_id)
                     session.add(db_metadata)
-                db_metadata.subject = subject or (metadata or {}).get("subject") or "General"
-                db_metadata.grade_level = grade_level or (metadata or {}).get("grade_level") or (metadata or {}).get("grade") or "General"
-                db_metadata.semester = semester or (metadata or {}).get("semester") or (metadata or {}).get("term") or "General"
-                db_metadata.is_course_book = bool(is_course_book)
+                db_metadata.subject = subject or (metadata or {}).get("subject") or db_metadata.subject or "General"
+                db_metadata.grade_level = grade_level or (metadata or {}).get("grade_level") or (metadata or {}).get("grade") or db_metadata.grade_level or "General"
+                db_metadata.semester = semester or (metadata or {}).get("semester") or (metadata or {}).get("term") or db_metadata.semester or "General"
+                db_metadata.is_course_book = bool(is_course_book) or bool(db_metadata.is_course_book)
 
                 session.commit()
                 logger.info(f"Saved file and metadata for {file_id}")
