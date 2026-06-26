@@ -433,11 +433,32 @@ Return JSON array only."""
         # Fetch the transcript from the Transcripts database table
         db_transcript = database_service.get_transcript_raw(request.fileId)
         if db_transcript and db_transcript.get("text"):
-            text_context = db_transcript["text"]
-            logger.info(f"Loaded transcript from database for file {request.fileId}")
+            segments = db_transcript.get("segments", [])
+            if segments:
+                formatted_segments = []
+                for seg in segments:
+                    start_sec = seg.get("start", 0.0)
+                    hrs = int(start_sec // 3600)
+                    mins = int((start_sec % 3600) // 60)
+                    secs = int(start_sec % 60)
+                    timestamp_str = f"[{hrs:02d}:{mins:02d}:{secs:02d}]"
+                    formatted_segments.append(f"{timestamp_str} {seg.get('text', '').strip()}")
+                text_context = "\n".join(formatted_segments)
+            else:
+                text_context = db_transcript["text"]
+            logger.info(f"Loaded transcript from database for file {request.fileId} (formatted with timestamps)")
         else:
             chunks = embedding_service.get_all_chunks_for_file(request.fileId)
-            text_context = "\n\n".join([c.get("text", "") for c in chunks[:12]])
+            formatted_chunks = []
+            for c in chunks[:12]:
+                chunk_text = c.get("text", "")
+                chunk_meta = c.get("metadata", {})
+                timestamp = chunk_meta.get("timestamp")
+                if timestamp:
+                    formatted_chunks.append(f"[{timestamp}] {chunk_text}")
+                else:
+                    formatted_chunks.append(chunk_text)
+            text_context = "\n\n".join(formatted_chunks)
             logger.info(f"Fallback to {len(chunks)} chunks for file {request.fileId}")
         
         is_ar = language_detector.should_use_arabic(request.message)
@@ -462,8 +483,11 @@ Transcript/context from fileId={request.fileId}:
 {text_context}
 
 Answer clearly in {'Arabic' if is_ar else 'English'}. Use the transcript context when relevant. If context is insufficient, say so briefly and answer generally.
+
+Note: The transcript/context contains timestamps in the format [HH:MM:SS]. If the user asks about what was explained at a specific minute or time (e.g., in the 5th minute), map that to the corresponding timestamp (e.g., [00:05:00]), find the content in the transcript, and explain it. You are encouraged to refer to or mention the timestamps in your response to help the user navigate the video.
+تنبيه: يحتوي النص/السياق على طوابع زمنية بتنسيق [HH:MM:SS]. إذا سأل المستخدم عما تم شرحه في دقيقة أو وقت معين (مثال: في الدقيقة الخامسة)، فقم بمطابقة ذلك مع الطابع الزمني المقابل (مثال: [00:05:00])، وابحث عن المحتوى في النص واشرحه. نشجعك على الإشارة إلى الطوابع الزمنية أو ذكرها في إجابتك لمساعدة المستخدم في الوصول إلى هذا الجزء من الفيديو.
 """
-        system = "You are an educational AI assistant connected to course transcripts. Be clear, accurate, and concise."
+        system = "You are an educational AI assistant connected to course transcripts with timestamps. Be clear, accurate, and concise. Always refer to timestamps when answering questions about specific times in the lesson."
         ai_response = (await self.rag.generate_directly(prompt=prompt, system_instruction=system)).strip()
 
         # Save messages
