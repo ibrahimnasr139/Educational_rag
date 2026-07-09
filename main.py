@@ -26,7 +26,7 @@ if os.path.exists(_poppler_dir):
 if _paths_to_add:
     os.environ["PATH"] = os.pathsep.join(_paths_to_add) + os.pathsep + os.environ.get("PATH", "")
 
-from fastapi import FastAPI, File, UploadFile, Form, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, File, UploadFile, Form, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -36,6 +36,7 @@ from models.schemas import (
     EmbedTranscribeResponse,
     GenerateTranscriptResponse,
     EmbedFileResponse,
+    EmbedFileRequest,
     GenerateQuestionsRequest,
     GenerateDescriptionRequest,
     GenerateDescriptionResponse,
@@ -213,32 +214,91 @@ async def generate_transcript(
 
 @app.post("/api/embed-file", response_model=EmbedFileResponse)
 async def embed_file(
-    file: UploadFile = File(...),
-    type: str = Form(...),
-    fileId: str = Form(...),
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: Optional[UploadFile] = File(None),
+    type: Optional[str] = Form(None),
+    fileId: Optional[str] = Form(None),
     callbackUrl: Optional[str] = Form(None),
     semester: Optional[str] = Form(None),
     isCourseBook: bool = Form(False),
 ):
     """Embed a document or video file for later RAG use."""
     try:
-        file_type = FileType(type)
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            body = await request.json()
+            req_data = EmbedFileRequest(**body)
+            file_id_val = req_data.fileId
+            type_val = req_data.type
+            callback_url_val = req_data.callbackUrl
+            semester_val = req_data.semester
+            is_course_book_val = req_data.isCourseBook
+        else:
+            file_id_val = fileId
+            type_val = type
+            callback_url_val = callbackUrl
+            semester_val = semester
+            is_course_book_val = isCourseBook
+
+        if not file_id_val or not type_val:
+            raise HTTPException(status_code=400, detail="Missing required parameters: fileId and type")
+
+        try:
+            file_type = FileType(type_val)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid file type. Must be: video | audio | document | image")
+
         if file_type not in {FileType.DOCUMENT, FileType.VIDEO, FileType.IMAGE}:
             raise ValueError("/api/embed-file supports document, video, or image")
+
         job_id = f"job-{int(time.time() * 1000)}"
-        await _process_uploaded_file(
-            file=file,
-            file_type=file_type,
-            file_id=fileId,
-            job_id=job_id,
-            callback_url=callbackUrl,
-            semester=semester,
-            is_course_book=isCourseBook,
-        )
-        return EmbedFileResponse(status="success", fileId=fileId)
+
+        # If it's a video, or there is no file, download from Bunny CDN in the background
+        if file_type == FileType.VIDEO or not file:
+            download_url = f"https://vz-51ee5657-212.b-cdn.net/{file_id_val}/original"
+            headers = {
+                "AccessKey": settings.bunny_access_key,
+                "Referer": "https://www.waey.online/"
+            }
+            from services.progress_service import progress_service
+            await progress_service.start_job(job_id, callback_url_val)
+
+            background_tasks.add_task(
+                document_processing_service.process_file,
+                file=None,
+                file_id=file_id_val,
+                job_id=job_id,
+                file_type=file_type,
+                callback_url=callback_url_val,
+                semester=semester_val,
+                is_course_book=is_course_book_val,
+                download_url=download_url,
+                headers=headers
+            )
+        else:
+            # Save the file synchronously to disk before returning, to prevent FastAPI
+            # from deleting/closing the UploadFile object before processing finishes in background.
+            file_path = await document_processing_service.file_service.save_upload(file, file_id_val, file_type)
+            from services.progress_service import progress_service
+            await progress_service.start_job(job_id, callback_url_val)
+
+            background_tasks.add_task(
+                document_processing_service.process_file,
+                file=None,
+                file_id=file_id_val,
+                job_id=job_id,
+                file_type=file_type,
+                callback_url=callback_url_val,
+                semester=semester_val,
+                is_course_book=is_course_book_val,
+                file_path=file_path
+            )
+
+        return EmbedFileResponse(status="success", fileId=file_id_val)
     except Exception as e:
         logger.error(f"File embedding failed: {e}")
-        return EmbedFileResponse(status="failed", fileId=fileId)
+        return EmbedFileResponse(status="failed", fileId=file_id_val if 'file_id_val' in locals() else "")
 
 
 # -------------------- AI generation endpoints --------------------

@@ -193,9 +193,18 @@ class GenerateTranscriptResponse(BaseModel):
     fileId: str
 
 
+class EmbedFileRequest(BaseModel):
+    fileId: str
+    type: str
+    callbackUrl: Optional[str] = None
+    semester: Optional[str] = None
+    isCourseBook: bool = False
+
+
 class EmbedFileResponse(BaseModel):
     status: Literal["failed", "success"]
     fileId: str
+
 
 
 class FlashcardsRequest(BaseModel):

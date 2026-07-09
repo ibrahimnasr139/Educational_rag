@@ -47,19 +47,21 @@ class DocumentProcessingService:
     
     async def process_file(
         self,
-        file: UploadFile,
+        file: Optional[UploadFile],
         file_id: str,
         job_id: str,
         file_type: FileType,
         callback_url: Optional[str] = None,
         translate_to_english: bool = False,
         semester: Optional[str] = None,
-        is_course_book: bool = False
+        is_course_book: bool = False,
+        file_path: Optional[str] = None,
+        download_url: Optional[str] = None,
+        headers: Optional[dict] = None
     ) -> dict:
         """
         Process a file through the complete pipeline.
         """
-        file_path = None
         try:
             # Start job
             await self.progress_service.start_job(job_id, callback_url)
@@ -68,15 +70,28 @@ class DocumentProcessingService:
             await self.progress_service.update(
                 job_id, 5, ProcessingStage.UPLOAD, callback_url
             )
-            file_path = await self.file_service.save_upload(file, file_id, file_type)
+            
+            if file_path:
+                original_name = os.path.basename(file_path)
+            elif download_url:
+                type_dir = os.path.join(self.file_service.upload_path, file_type.value)
+                os.makedirs(type_dir, exist_ok=True)
+                file_path = os.path.join(type_dir, f"{file_id}.mp4")
+                await self._download_file(download_url, file_path, headers or {}, job_id, callback_url)
+                original_name = f"{file_id}.mp4"
+            else:
+                if not file:
+                    raise ValueError("File, file_path, or download_url must be provided")
+                file_path = await self.file_service.save_upload(file, file_id, file_type)
+                original_name = file.filename
 
             # Save initial file info to PostgreSQL.
             # Metadata is inferred from the filename, then explicit form values override it.
-            inferred_metadata = compact_metadata(extract_metadata_from_filename(file.filename or ''))
+            inferred_metadata = compact_metadata(extract_metadata_from_filename(original_name or ''))
             effective_semester = semester or inferred_metadata.get('semester') or inferred_metadata.get('term')
             database_service.save_file_info(
                 file_id=file_id,
-                original_name=file.filename,
+                original_name=original_name,
                 file_type=file_type.value,
                 subject=inferred_metadata.get('subject'),
                 grade_level=inferred_metadata.get('grade_level') or inferred_metadata.get('grade'),
@@ -509,6 +524,59 @@ class DocumentProcessingService:
             logger.info(f"Saved transcript to PostgreSQL for {file_id}")
         except Exception as e:
             logger.error(f"Failed to save transcript to DB: {e}")
+
+    async def _download_file(
+        self,
+        url: str,
+        dest_path: str,
+        headers: Dict[str, str],
+        job_id: str,
+        callback_url: Optional[str]
+    ):
+        """
+        Download a file asynchronously from Bunny CDN in chunks and save to dest_path.
+        """
+        import httpx
+        import aiofiles
+        
+        logger.info(f"Downloading file from CDN: {url} to {dest_path}")
+        
+        # We will use progress range 1-5% for the download stage
+        async with httpx.AsyncClient(follow_redirects=True, timeout=600.0) as client:
+            async with client.stream("GET", url, headers=headers) as response:
+                if response.status_code != 200:
+                    error_msg = f"Failed to download video from CDN, status code: {response.status_code}"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                
+                total_bytes = int(response.headers.get("content-length", 0))
+                downloaded_bytes = 0
+                
+                # Use a temporary file to download, then rename, to avoid corrupted files on interrupt
+                temp_dest_path = f"{dest_path}.tmp"
+                try:
+                    async with aiofiles.open(temp_dest_path, "wb") as f:
+                        async for chunk in response.iter_bytes(chunk_size=1024*1024):
+                            await f.write(chunk)
+                            downloaded_bytes += len(chunk)
+                            
+                            # Periodically update progress if total size is known
+                            if total_bytes > 0:
+                                percent = 1 + int((downloaded_bytes / total_bytes) * 4)
+                                await self.progress_service.update(
+                                    job_id, percent, ProcessingStage.UPLOAD, callback_url
+                                )
+                    
+                    # Rename temp file to dest_path
+                    if os.path.exists(dest_path):
+                        os.remove(dest_path)
+                    os.rename(temp_dest_path, dest_path)
+                    logger.info(f"Download completed successfully. Saved to {dest_path}")
+                except Exception as e:
+                    if os.path.exists(temp_dest_path):
+                        os.remove(temp_dest_path)
+                    logger.error(f"Error during video download: {e}")
+                    raise
 
 
 # Global instance

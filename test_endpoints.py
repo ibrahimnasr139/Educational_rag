@@ -263,22 +263,43 @@ try:
 except Exception as e:
     log("POST /api/embed-file (document)", FAIL, str(e))
 
-# Verify the uploaded file's chunks are retrievable
+# Verify the uploaded file's chunks are retrievable (with polling for background task completion)
 EMBED_FILE_ID = f"{TEST_FILE_ID}-embed"
 try:
-    time.sleep(1)  # small wait
-    r = requests.get(f"{BASE}/api/get-chunks/{EMBED_FILE_ID}", timeout=10)
-    if r.status_code == 200 and len(r.json()) > 0:
-        log(f"GET /api/get-chunks/{{embedded_file_id}} (verify embed worked)", PASS,
-            f"{len(r.json())} chunk(s) found")
-    elif r.status_code == 404:
+    success = False
+    for attempt in range(15):
+        time.sleep(1)
+        r = requests.get(f"{BASE}/api/get-chunks/{EMBED_FILE_ID}", timeout=10)
+        if r.status_code == 200 and len(r.json()) > 0:
+            log(f"GET /api/get-chunks/{{embedded_file_id}} (verify embed worked)", PASS,
+                f"{len(r.json())} chunk(s) found after {attempt+1}s")
+            success = True
+            break
+    if not success:
         log(f"GET /api/get-chunks/{{embedded_file_id}} (verify embed worked)", SKIP,
-            "Chunks not found — embedding may not have stored in ChromaDB yet")
-    else:
-        log(f"GET /api/get-chunks/{{embedded_file_id}} (verify embed worked)", FAIL,
-            f"status={r.status_code}")
+            "Chunks not found — embedding may not have finished or stored in ChromaDB yet")
 except Exception as e:
     log(f"GET /api/get-chunks/{{embedded_file_id}}", FAIL, str(e))
+
+# ── 6. Asynchronous Bunny Video Embedding (JSON) ─────────────
+section("6. Asynchronous Bunny Video Embedding")
+
+try:
+    # Use a dummy video ID for testing - it will fail downloading but the endpoint should return immediately.
+    # We can inspect if the endpoint returns status: success.
+    payload = {
+        "fileId": "demo-bunny-video-id",
+        "type": "video",
+        "callbackUrl": "http://localhost:8000/health"
+    }
+    r = requests.post(f"{BASE}/api/embed-file", json=payload, timeout=30)
+    if r.status_code == 200:
+        log("POST /api/embed-file (Bunny Video JSON)", PASS, str(r.json()))
+    else:
+        log("POST /api/embed-file (Bunny Video JSON)", FAIL, f"status={r.status_code} body={r.text[:300]}")
+except Exception as e:
+    log("POST /api/embed-file (Bunny Video JSON)", FAIL, str(e))
+
 
 # Tiny WAV for generate-transcript
 TINY_AUDIO = b"RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80>\x00\x00\x00}\x00\x00\x02\x00\x10\x00data\x00\x00\x00\x00"

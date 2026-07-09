@@ -85,6 +85,10 @@ class Settings(BaseSettings):
     # Callbacks
     callback_timeout: int = 15
 
+    # Bunny CDN
+    bunny_access_key: str = "f4bcd605-1bac-4879-96cbb58907f3-6d4a-44b3"
+
+
     @property
     def cors_origins_list(self) -> List[str]:
         if self.cors_origins.strip() == '*':
