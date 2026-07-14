@@ -83,6 +83,7 @@ async def lifespan(app: FastAPI):
         database_service.init_db()
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
+        raise
     yield
     logger.info("Shutting down...")
     await progress_tracker.close()
@@ -133,32 +134,10 @@ async def health_check():
     }
 
 
-async def _process_uploaded_file(
-    *,
-    file: UploadFile,
-    file_type: FileType,
-    file_id: str,
-    job_id: str,
-    callback_url: Optional[str] = None,
-    translate_to_english: bool = False,
-    semester: Optional[str] = None,
-    is_course_book: bool = False,
-):
-    return await document_processing_service.process_file(
-        file=file,
-        file_id=file_id,
-        file_type=file_type,
-        job_id=job_id,
-        callback_url=callback_url,
-        translate_to_english=translate_to_english,
-        semester=semester,
-        is_course_book=is_course_book,
-    )
-
-
 # -------------------- File processing endpoints --------------------
 @app.post("/api/embed-and-transcribe", response_model=EmbedTranscribeResponse)
 async def embed_and_transcribe(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     type: str = Form(...),
     fileId: str = Form(...),
@@ -174,17 +153,25 @@ async def embed_and_transcribe(
         raise HTTPException(status_code=400, detail="Invalid file type. Must be: video | audio | document | image")
 
     try:
-        await _process_uploaded_file(
-            file=file,
-            file_type=file_type,
+        original_name = file.filename
+        file_path = await document_processing_service.file_service.save_upload(
+            file, fileId, file_type
+        )
+        await progress_service.start_job(jobId, callbackUrl)
+        background_tasks.add_task(
+            document_processing_service.process_file,
+            file=None,
             file_id=fileId,
+            file_type=file_type,
             job_id=jobId,
             callback_url=callbackUrl,
             translate_to_english=translateToEnglish,
             semester=semester,
             is_course_book=isCourseBook,
+            file_path=file_path,
+            original_name=original_name,
         )
-        return EmbedTranscribeResponse(jobId=jobId, status=ProcessingStatus.SUCCESS, fileId=fileId)
+        return EmbedTranscribeResponse(jobId=jobId, status=ProcessingStatus.PROCESSING, fileId=fileId)
     except Exception as e:
         logger.error(f"Processing failed: {e}")
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
@@ -192,19 +179,28 @@ async def embed_and_transcribe(
 
 @app.post("/api/generate-transcript", response_model=GenerateTranscriptResponse)
 async def generate_transcript(
+    background_tasks: BackgroundTasks,
     audio: UploadFile = File(...),
     fileId: str = Form(...),
     callbackUrl: Optional[str] = Form(None),
     jobId: str = Form(...),
 ):
-    """Transcribe an audio file and store transcript/chunks for RAG."""
+    """Queue an audio transcription and store its transcript/chunks for RAG."""
     try:
-        await _process_uploaded_file(
-            file=audio,
-            file_type=FileType.AUDIO,
+        original_name = audio.filename
+        file_path = await document_processing_service.file_service.save_upload(
+            audio, fileId, FileType.AUDIO
+        )
+        await progress_service.start_job(jobId, callbackUrl)
+        background_tasks.add_task(
+            document_processing_service.process_file,
+            file=None,
             file_id=fileId,
+            file_type=FileType.AUDIO,
             job_id=jobId,
             callback_url=callbackUrl,
+            file_path=file_path,
+            original_name=original_name,
         )
         return GenerateTranscriptResponse(jobId=jobId, status="success", fileId=fileId)
     except Exception as e:
@@ -292,7 +288,8 @@ async def embed_file(
                 callback_url=callback_url_val,
                 semester=semester_val,
                 is_course_book=is_course_book_val,
-                file_path=file_path
+                file_path=file_path,
+                original_name=file.filename,
             )
 
         return EmbedFileResponse(status="success", fileId=file_id_val)

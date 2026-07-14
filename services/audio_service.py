@@ -265,10 +265,17 @@ class AudioService:
         api_audio_path, should_remove = self._prepare_audio_for_openai(audio_path)
         try:
             with open(api_audio_path, "rb") as audio_file:
+                # Only whisper-1 supports verbose_json. Newer transcription
+                # models reject it, and retrying the same audio doubles latency.
+                response_format = (
+                    "verbose_json"
+                    if settings.openai_transcription_model.strip().lower() == "whisper-1"
+                    else "json"
+                )
                 kwargs = {
                     "model": settings.openai_transcription_model,
                     "file": audio_file,
-                    "response_format": "verbose_json",
+                    "response_format": response_format,
                 }
                 if language and not translate_to_english:
                     kwargs["language"] = language
@@ -279,6 +286,14 @@ class AudioService:
                     else:
                         response = client.audio.transcriptions.create(**kwargs)
                 except Exception as e:
+                    error_text = str(e).lower()
+                    can_retry_format = (
+                        response_format == "verbose_json"
+                        and "response_format" in error_text
+                        and ("unsupported" in error_text or "not compatible" in error_text)
+                    )
+                    if not can_retry_format:
+                        raise
                     logger.warning(
                         f"OpenAI transcription with verbose_json failed, retrying without it: {e}"
                     )
