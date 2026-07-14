@@ -136,7 +136,7 @@ class FileChunks(Base):
     __tablename__ = "FileChunks"
     id = Column("Id", Integer, primary_key=True, autoincrement=True)
     file_id = Column("FileId", String, ForeignKey("Files.Id"), index=True)
-    tenant_id = Column("TenantId", String, nullable=True)
+    tenant_id = Column("TenantId", TenantIdDecorator, nullable=True)
     text = Column("Text", Text)
     tokens = Column("Tokens", Integer)
     chunk_index = Column("ChunkIndex", Integer)
@@ -190,9 +190,9 @@ class VideoTimestamps(Base):
 class AiAssistantMessages(Base):
     __tablename__ = "AiAssistantMessages"
 
-    id = Column(String, primary_key=True)
-    student_id = Column(String, index=True)
-    tenant_id = Column(String, index=True)
-    role = Column(String)
-    message = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id = Column("Id", Integer, primary_key=True, autoincrement=True)
+    student_id = Column("StudentId", Integer, index=True)
+    lesson_id = Column("LessonId", Integer, index=True)
+    role = Column("Role", Integer)
+    content = Column("Content", String(4000))
+    created_at = Column("CreatedAt", DateTime, default=datetime.utcnow)

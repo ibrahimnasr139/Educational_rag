@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from contextlib import contextmanager
 from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import sessionmaker, Session
@@ -10,6 +10,32 @@ import logging
 from sqlalchemy.engine import make_url
 
 logger = logging.getLogger(__name__)
+
+
+# These names mirror the existing .NET/PostgreSQL schema. PostgreSQL folds
+# unquoted identifiers to lowercase, so changing their case silently targets a
+# different table/column.
+EXPECTED_SCHEMA = {
+    "Files": {
+        "Id", "TenantId", "UploadedById", "Name", "Size", "Type", "Url",
+        "StorageProvider", "Metadata", "Status", "CreatedAt", "UpdatedAt",
+    },
+    "FileChunks": {
+        "Id", "FileId", "TenantId", "Text", "Tokens", "ChunkIndex",
+        "ModelName", "Metadata",
+    },
+    "Metadata": {
+        "Id", "FileId", "Subject", "GradeLevel", "Semester", "IsCourseBook",
+    },
+    "Transcripts": {"Id", "FileId", "FullText", "Language", "CreatedAt"},
+    "VideoTimestamps": {
+        "Id", "FileId", "SegmentIndex", "Text", "StartTime", "EndTime",
+        "CreatedAt",
+    },
+    "AiAssistantMessages": {
+        "Id", "StudentId", "LessonId", "Role", "Content", "CreatedAt",
+    },
+}
 
 
 class DatabaseService:
@@ -33,10 +59,33 @@ class DatabaseService:
     def init_db(self):
         try:
             Base.metadata.create_all(bind=self.engine)
+            self.validate_schema()
             logger.info("Database tables initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize database (check DATABASE_URL/SSL/network): {e}")
             raise
+
+    def validate_schema(self):
+        """Fail with a useful error when quoted PascalCase names do not match."""
+        inspector = inspect(self.engine)
+        actual_tables = set(inspector.get_table_names())
+        errors = []
+
+        for table_name, expected_columns in EXPECTED_SCHEMA.items():
+            if table_name not in actual_tables:
+                errors.append(f'missing table "{table_name}"')
+                continue
+
+            actual_columns = {
+                column["name"] for column in inspector.get_columns(table_name)
+            }
+            missing_columns = expected_columns - actual_columns
+            if missing_columns:
+                formatted = ", ".join(f'"{name}"' for name in sorted(missing_columns))
+                errors.append(f'table "{table_name}" is missing columns: {formatted}')
+
+        if errors:
+            raise RuntimeError("Database schema mismatch: " + "; ".join(errors))
 
     @contextmanager
     def get_session(self) -> Session:
@@ -127,7 +176,14 @@ class DatabaseService:
                 logger.error(f"Failed to save file info: {e}")
                 raise
 
-    def save_transcript(self, file_id: str, full_text: str, language: str):
+    def save_transcript(
+        self,
+        file_id: str,
+        full_text: str,
+        language: str,
+        segments: list | None = None,
+    ):
+        """Upsert a transcript and its timestamps in one transaction."""
         with self.get_session() as session:
             try:
                 clean_text = full_text.replace("\x00", "") if full_text else ""
@@ -139,8 +195,25 @@ class DatabaseService:
                 db_transcript.language = language
                 db_transcript.created_at = datetime.utcnow()
 
+                if segments is not None:
+                    session.query(VideoTimestamps).filter(
+                        VideoTimestamps.file_id == file_id
+                    ).delete()
+                    for i, segment in enumerate(segments):
+                        session.add(VideoTimestamps(
+                            file_id=file_id,
+                            segment_index=i,
+                            text=(segment.get("text", "") or "").replace("\x00", ""),
+                            start_time=float(segment.get("start", 0.0) or 0.0),
+                            end_time=float(segment.get("end", 0.0) or 0.0),
+                        ))
+
                 session.commit()
-                logger.info(f"Saved transcript for {file_id}")
+                logger.info(
+                    "Saved transcript%s for %s",
+                    f" and {len(segments)} timestamps" if segments is not None else "",
+                    file_id,
+                )
             except Exception as e:
                 session.rollback()
                 logger.error(f"Failed to save transcript: {e}")

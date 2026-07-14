@@ -56,6 +56,7 @@ class DocumentProcessingService:
         semester: Optional[str] = None,
         is_course_book: bool = False,
         file_path: Optional[str] = None,
+        original_name: Optional[str] = None,
         download_url: Optional[str] = None,
         headers: Optional[dict] = None
     ) -> dict:
@@ -72,13 +73,13 @@ class DocumentProcessingService:
             )
             
             if file_path:
-                original_name = os.path.basename(file_path)
+                original_name = original_name or os.path.basename(file_path)
             elif download_url:
                 type_dir = os.path.join(self.file_service.upload_path, file_type.value)
                 os.makedirs(type_dir, exist_ok=True)
                 file_path = os.path.join(type_dir, f"{file_id}.mp4")
                 await self._download_file(download_url, file_path, headers or {}, job_id, callback_url)
-                original_name = f"{file_id}.mp4"
+                original_name = original_name or f"{file_id}.mp4"
             else:
                 if not file:
                     raise ValueError("File, file_path, or download_url must be provided")
@@ -511,19 +512,15 @@ class DocumentProcessingService:
             except Exception as e:
                 logger.error(f"Failed to save transcript JSON: {e}")
 
-        # 2. Save to PostgreSQL
-        try:
-            from services.database_service import database_service
-            database_service.save_transcript(
-                file_id=file_id,
-                full_text=text,
-                language=language
-            )
-            if segments:
-                database_service.save_timestamps(file_id, segments)
-            logger.info(f"Saved transcript to PostgreSQL for {file_id}")
-        except Exception as e:
-            logger.error(f"Failed to save transcript to DB: {e}")
+        # 2. Save to PostgreSQL. A database failure must fail the job instead
+        # of returning a false success with no transcript row.
+        database_service.save_transcript(
+            file_id=file_id,
+            full_text=text,
+            language=language,
+            segments=segments,
+        )
+        logger.info(f"Saved transcript to PostgreSQL for {file_id}")
 
     async def _download_file(
         self,
@@ -556,7 +553,7 @@ class DocumentProcessingService:
                 temp_dest_path = f"{dest_path}.tmp"
                 try:
                     async with aiofiles.open(temp_dest_path, "wb") as f:
-                        async for chunk in response.iter_bytes(chunk_size=1024*1024):
+                        async for chunk in response.aiter_bytes(chunk_size=1024*1024):
                             await f.write(chunk)
                             downloaded_bytes += len(chunk)
                             
