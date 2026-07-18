@@ -4,7 +4,7 @@ Compatible with Pydantic v2.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator, RootModel, ConfigDict
+from pydantic import AliasChoices, BaseModel, Field, field_validator, RootModel, ConfigDict
 from typing import List, Optional, Dict, Any, Literal
 from models.enums import FileType, QuestionType, DifficultyLevel, ProcessingStatus, ProcessingStage
 
@@ -67,16 +67,30 @@ class GeneratedQuestion(BaseModel):
 
 
 class GenerateQuestionsRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     metadata: QuestionMetadata = Field(default_factory=QuestionMetadata)
     prompt: Optional[str] = ""
     questionsNumber: int = Field(default=10, ge=1, le=50)
     difficulty: DifficultyLevel = Field(default=DifficultyLevel.MIX)
     type: QuestionType = Field(default=QuestionType.MCQ)
+    language: Optional[str] = Field(default=None, validation_alias=AliasChoices("language", "outputLanguage", "lang"))
 
     @field_validator("difficulty", mode="before")
     @classmethod
     def normalize_difficulty(cls, v):
         return "hard" if v == "difficult" else v
+
+    @field_validator("language")
+    @classmethod
+    def normalize_language(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = str(v).strip().lower()
+        if value in {"en", "eng", "english"}:
+            return "en"
+        if value in {"ar", "ara", "arabic"}:
+            return "ar"
+        raise ValueError("language must be 'en' or 'ar'")
 
 
 class GenerateQuestionsResponse(RootModel[List[GeneratedQuestion]]):
@@ -208,12 +222,26 @@ class EmbedFileResponse(BaseModel):
 
 
 class FlashcardsRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     subject: str
     chapter: Optional[str] = ""
     topic: str
     goal: Optional[str] = None
     numberOfCards: int = Field(default=10, ge=1, le=50)
     grade: Optional[str] = ""
+    language: Optional[str] = Field(default=None, validation_alias=AliasChoices("language", "outputLanguage", "lang"))
+
+    @field_validator("language")
+    @classmethod
+    def normalize_language(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = str(v).strip().lower()
+        if value in {"en", "eng", "english"}:
+            return "en"
+        if value in {"ar", "ara", "arabic"}:
+            return "ar"
+        raise ValueError("language must be 'en' or 'ar'")
 
 
 class Flashcard(BaseModel):
@@ -240,6 +268,7 @@ class GenerateQuizRequest(BaseModel):
     difficulty: DifficultyLevel = Field(default=DifficultyLevel.MEDIUM)
     chapter: Optional[str] = Field(default=None, validation_alias="module")
     grade: Optional[str] = ""
+    language: Optional[str] = Field(default=None, validation_alias=AliasChoices("language", "outputLanguage", "lang"))
 
     @field_validator("difficulty", mode="before")
     @classmethod
@@ -247,6 +276,18 @@ class GenerateQuizRequest(BaseModel):
         if v == "difficult": return "hard"
         if v == "mix": return "mix"
         return v
+
+    @field_validator("language")
+    @classmethod
+    def normalize_language(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = str(v).strip().lower()
+        if value in {"en", "eng", "english"}:
+            return "en"
+        if value in {"ar", "ara", "arabic"}:
+            return "ar"
+        raise ValueError("language must be 'en' or 'ar'")
 
 
 class QuizOption(BaseModel):

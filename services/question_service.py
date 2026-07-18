@@ -114,15 +114,17 @@ class QuestionService:
             ][:5]
 
             metadata = request.metadata
-            is_arabic = self._should_generate_arabic_from_material(
-                metadata.subject if metadata else None,
-                metadata.course if metadata else None,
-                metadata.module if metadata else None,
-                metadata.title if metadata else None,
-                metadata.description if metadata else None,
-                request.prompt,
-                search_query,
-            )
+            is_arabic = self._is_arabic_from_request_language(request.language)
+            if is_arabic is None:
+                is_arabic = self._should_generate_arabic_from_material(
+                    metadata.subject if metadata else None,
+                    metadata.course if metadata else None,
+                    metadata.module if metadata else None,
+                    metadata.title if metadata else None,
+                    metadata.description if metadata else None,
+                    request.prompt,
+                    search_query,
+                )
             system_instruction = self._build_system_instruction(request, is_arabic)
             generation_prompt = self._build_generation_prompt(request, is_arabic)
 
@@ -146,6 +148,13 @@ class QuestionService:
 
     def _language_name(self, is_arabic: bool) -> str:
         return "Arabic" if is_arabic else "English"
+
+    def _is_arabic_from_request_language(self, language: Optional[str]) -> Optional[bool]:
+        if language == "ar":
+            return True
+        if language == "en":
+            return False
+        return None
 
     def _normalize_language_label(self, value: Optional[str]) -> str:
         text = str(value or "").strip().lower()
@@ -193,13 +202,30 @@ class QuestionService:
         return None
 
     def _should_generate_arabic_from_material(self, subject: Optional[str] = None, *values: Optional[str]) -> bool:
-        subject_override = self._subject_language_override(subject)
-        if subject_override is not None:
-            return subject_override
-
         values = (subject, *values)
+        overrides = [
+            self._subject_language_override(value)
+            for value in values
+            if value
+        ]
+        if False in overrides:
+            return False
+        if True in overrides:
+            return True
+
         material_text = " ".join(str(value) for value in values if value)
         return language_detector.should_use_arabic(material_text)
+
+    def _language_requirements(self, language: str) -> str:
+        if language == "English":
+            return (
+                "Write every question, option, answer, and explanation in English only. "
+                "Do not output Arabic text, even if subject/course/module labels are written in Arabic."
+            )
+        return (
+            "اكتب كل الأسئلة والاختيارات والإجابات والشرح باللغة العربية فقط. "
+            "لا تُخرج نصا إنجليزيا إلا إذا كان مصطلحا علميا ضروريا."
+        )
 
     def _build_system_instruction(self, request: GenerateQuestionsRequest, is_arabic: bool) -> str:
         lang = self._language_name(is_arabic)
@@ -210,7 +236,7 @@ class QuestionService:
 Generate high-quality questions based on the provided context.
 Requirements:
 - Generate in {lang}.
-- Match the output language to the learning material/content language, not to the curriculum label language.
+- {self._language_requirements(lang)}
 - For MCQ: provide 4 options with exactly one correct answer.
 - For True/False: correctAnswer must be "true" or "false".
 - For Short Answer: correctAnswer should be a concise model answer.
@@ -231,6 +257,15 @@ Return JSON only."""
             prompt = f"Generate {request.questionsNumber} educational questions."
             prompt += f"\nQuestion type: {request.type.value}. Difficulty: {request.difficulty.value}."
             prompt += f"\nExtra instructions: {request.prompt or ''}"
+            if request.metadata:
+                prompt += (
+                    f"\nSubject: {request.metadata.subject}"
+                    f"\nGrade: {request.metadata.grade}"
+                    f"\nCourse: {request.metadata.course}"
+                    f"\nModule: {request.metadata.module}"
+                    f"\nTitle: {request.metadata.title}"
+                    f"\nDescription: {request.metadata.description}"
+                )
         return prompt
 
     def _get_output_schema(self, question_type: QuestionType) -> dict:
@@ -409,7 +444,9 @@ Requirements: 2-3 sentences, suitable for the content type, no intro, final desc
 
     # --------------------------- new AI endpoints ---------------------------
     async def generate_flashcards(self, request: FlashcardsRequest) -> List[Flashcard]:
-        is_ar = self._should_generate_arabic_from_material(request.subject, request.chapter, request.topic, request.goal)
+        is_ar = self._is_arabic_from_request_language(request.language)
+        if is_ar is None:
+            is_ar = self._should_generate_arabic_from_material(request.subject, request.chapter, request.topic, request.goal)
         language = self._language_name(is_ar)
         prompt = f"""Generate {request.numberOfCards} flashcards for:
 Subject: {request.subject}
@@ -417,7 +454,8 @@ Chapter: {request.chapter}
 Topic: {request.topic}
 Grade/Level: {request.grade or ''}
 Goal: {request.goal or ''}
-Use {language}. Match the language of the subject/topic/chapter content, not the curriculum label.
+Use {language}.
+{self._language_requirements(language)}
 Return JSON array only."""
         schema = {"type":"array","items":{"front":"string","back":"string"}}
         system_instruction = f"You create concise educational flashcards in {language}. Return JSON only."
@@ -462,14 +500,17 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
         return AskAIResponse(question=raw.get("question", request.question), explanation=raw.get("explanation", ""), examples=raw.get("examples", []) or [])
 
     async def generate_quiz(self, request: GenerateQuizRequest) -> List[QuizQuestion]:
-        is_ar = self._should_generate_arabic_from_material(request.subject, request.chapter)
+        is_ar = self._is_arabic_from_request_language(request.language)
+        if is_ar is None:
+            is_ar = self._should_generate_arabic_from_material(request.subject, request.chapter)
         language = self._language_name(is_ar)
         prompt = f"""Generate {request.numberOfQuestions} MCQ quiz questions.
 Subject: {request.subject}
 Chapter: {request.chapter or ''}
 Grade/Level: {request.grade or ''}
 Difficulty: {request.difficulty.value}
-Use {language}. Match the language of the subject/chapter content, not the curriculum label.
+Use {language}.
+{self._language_requirements(language)}
 Each question must have 4 options and exactly one correct option.
 Return JSON array only."""
         schema = {"type":"array","items":{"question":"string","options":[{"text":"string","isCorrect":"boolean"}],"explanation":"string","type":"mcq"}}

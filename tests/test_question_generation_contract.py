@@ -69,3 +69,35 @@ def test_ai_generate_questions_uses_english_for_english_subject_even_when_label_
         QuestionMetadata(subject=ARABIC_ENGLISH_SUBJECT).subject,
         ARABIC_TOPIC,
     )
+
+
+def test_language_override_checks_course_and_module_when_subject_is_generic():
+    service = QuestionService()
+
+    assert not service._should_generate_arabic_from_material("General", ARABIC_ENGLISH_SUBJECT)
+    assert not service._should_generate_arabic_from_material(None, "General", ARABIC_ENGLISH_SUBJECT)
+
+
+def test_english_generation_prompt_includes_metadata_and_strict_language_rule():
+    request = GenerateQuestionsRequest(
+        metadata=QuestionMetadata(subject="General", course=ARABIC_ENGLISH_SUBJECT),
+        prompt=ARABIC_TOPIC,
+    )
+    service = QuestionService()
+    prompt = service._build_generation_prompt(request, is_arabic=False)
+    system = service._build_system_instruction(request, is_arabic=False)
+
+    assert "Course:" in prompt
+    assert ARABIC_ENGLISH_SUBJECT in prompt
+    assert "English only" in system
+    assert "Do not output Arabic text" in system
+
+
+def test_explicit_language_overrides_arabic_labels():
+    service = QuestionService()
+
+    assert not service._is_arabic_from_request_language(
+        GenerateQuizRequest(subject=ARABIC_ENGLISH_SUBJECT, chapter=ARABIC_TOPIC, language="en").language
+    )
+    assert GenerateQuizRequest(subject=ARABIC_ENGLISH_SUBJECT, chapter=ARABIC_TOPIC, outputLanguage="english").language == "en"
+    assert GenerateQuestionsRequest(language="arabic").language == "ar"
