@@ -1,13 +1,14 @@
 import asyncio
 
 from models.enums import DifficultyLevel, QuestionType
-from models.schemas import FlashcardsRequest, GenerateQuestionsRequest, GenerateQuizRequest
+from models.schemas import FlashcardsRequest, GenerateQuestionsRequest, GenerateQuizRequest, QuestionMetadata
 from services.question_service import QuestionService
 
 
 ARABIC_GRAMMAR = "\u0627\u0644\u0642\u0648\u0627\u0639\u062f \u0627\u0644\u0646\u062d\u0648\u064a\u0629"
 ARABIC_NAHW = "\u0627\u0644\u0646\u062d\u0648"
 ARABIC_TOPIC = "\u0627\u0644\u0645\u0628\u062a\u062f\u0623 \u0648\u0627\u0644\u062e\u0628\u0631"
+ARABIC_ENGLISH_SUBJECT = "\u0644\u063a\u0629 \u0625\u0646\u062c\u0644\u064a\u0632\u064a\u0629"
 
 
 def test_difficulty_accepts_hard_and_normalizes_legacy_difficult():
@@ -23,7 +24,7 @@ def test_question_output_contract_uses_hard_not_difficult():
     assert schema["items"]["difficulty"] == "easy|medium|hard"
 
 
-def test_quiz_uses_material_language_not_curriculum_language():
+def test_quiz_uses_english_for_english_subject_even_when_label_is_arabic():
     service = QuestionService()
     captured = {}
 
@@ -34,13 +35,13 @@ def test_quiz_uses_material_language_not_curriculum_language():
 
     service._structured = fake_structured
 
-    asyncio.run(service.generate_quiz(GenerateQuizRequest(subject="English", chapter=ARABIC_GRAMMAR)))
+    asyncio.run(service.generate_quiz(GenerateQuizRequest(subject=ARABIC_ENGLISH_SUBJECT, chapter=ARABIC_GRAMMAR)))
 
-    assert "Use Arabic." in captured["prompt"]
-    assert "in Arabic" in captured["system_instruction"]
+    assert "Use English." in captured["prompt"]
+    assert "in English" in captured["system_instruction"]
 
 
-def test_flashcards_uses_material_language_not_curriculum_language():
+def test_flashcards_uses_english_for_english_subject_even_when_label_is_arabic():
     service = QuestionService()
     captured = {}
 
@@ -53,9 +54,18 @@ def test_flashcards_uses_material_language_not_curriculum_language():
 
     asyncio.run(
         service.generate_flashcards(
-            FlashcardsRequest(subject="English", chapter=ARABIC_NAHW, topic=ARABIC_TOPIC)
+            FlashcardsRequest(subject=ARABIC_ENGLISH_SUBJECT, chapter=ARABIC_NAHW, topic=ARABIC_TOPIC)
         )
     )
 
-    assert "Use Arabic." in captured["prompt"]
-    assert "in Arabic" in captured["system_instruction"]
+    assert "Use English." in captured["prompt"]
+    assert "in English" in captured["system_instruction"]
+
+
+def test_ai_generate_questions_uses_english_for_english_subject_even_when_label_is_arabic():
+    service = QuestionService()
+
+    assert not service._should_generate_arabic_from_material(
+        QuestionMetadata(subject=ARABIC_ENGLISH_SUBJECT).subject,
+        ARABIC_TOPIC,
+    )
