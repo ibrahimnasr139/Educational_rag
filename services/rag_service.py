@@ -8,6 +8,7 @@ from google.genai import types
 from typing import List, Dict, Any, Optional
 import logging
 import json
+import asyncio
 from config.settings import settings
 from services.embedding_service import embedding_service
 from utils.language_detector import language_detector
@@ -19,7 +20,6 @@ logger = logging.getLogger(__name__)
 # Monkey-patch OpenAILLM to fail fast on permanent quota errors (insufficient_quota)
 try:
     from dhakira.llm.openai_ import OpenAILLM
-    import asyncio
     import json
     
     def patched_get_client(self):
@@ -436,6 +436,22 @@ class RAGService:
         """Check if error is due to OpenAI quota exhaustion."""
         error_str = str(error).lower()
         return "insufficient_quota" in error_str or "quota" in error_str and "429" in error_str
+
+    def _is_transient_generation_error(self, error: Exception) -> bool:
+        """Check if a generation error is likely temporary and worth retrying."""
+        error_str = str(error).lower()
+        transient_markers = (
+            "503",
+            "unavailable",
+            "high demand",
+            "temporarily",
+            "try again later",
+            "deadline exceeded",
+            "timeout",
+            "rate limit",
+            "resource_exhausted",
+        )
+        return any(marker in error_str for marker in transient_markers)
     
     async def _fallback_to_gemini(self, prompt: str) -> str:
         """Fallback to Gemini when OpenAI fails."""
@@ -523,7 +539,7 @@ class RAGService:
         question_config["max_output_tokens"] = 8192  # Ensure enough tokens for multiple questions
         
         # Generate
-        max_retries = 2
+        max_retries = 4
         last_error = None
         
         current_prompt = prompt
@@ -560,6 +576,16 @@ class RAGService:
                 logger.error(f"Generation attempt {attempt + 1} failed: {e}")
                 if self._is_quota_error(e):
                     raise
+                if self._is_transient_generation_error(e) and attempt < max_retries - 1:
+                    wait = min(2 ** (attempt + 1), 12)
+                    logger.info(
+                        "Transient generation error, retrying in %ss (attempt %s/%s)",
+                        wait,
+                        attempt + 2,
+                        max_retries,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
                 
         raise ValueError(f"Generated response was not valid JSON after {max_retries} attempts. Last error: {last_error}")
 
