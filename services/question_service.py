@@ -113,7 +113,16 @@ class QuestionService:
                 if c.get("score", 0) >= 0.35
             ][:5]
 
-            is_arabic = language_detector.should_use_arabic(request.prompt or search_query)
+            metadata = request.metadata
+            is_arabic = self._should_generate_arabic_from_material(
+                metadata.subject if metadata else None,
+                metadata.course if metadata else None,
+                metadata.module if metadata else None,
+                metadata.title if metadata else None,
+                metadata.description if metadata else None,
+                request.prompt,
+                search_query,
+            )
             system_instruction = self._build_system_instruction(request, is_arabic)
             generation_prompt = self._build_generation_prompt(request, is_arabic)
 
@@ -138,7 +147,57 @@ class QuestionService:
     def _language_name(self, is_arabic: bool) -> str:
         return "Arabic" if is_arabic else "English"
 
-    def _should_generate_arabic_from_material(self, *values: Optional[str]) -> bool:
+    def _normalize_language_label(self, value: Optional[str]) -> str:
+        text = str(value or "").strip().lower()
+        for src, dst in {
+            "أ": "ا",
+            "إ": "ا",
+            "آ": "ا",
+            "ى": "ي",
+            "ة": "ه",
+        }.items():
+            text = text.replace(src, dst)
+        return " ".join(text.split())
+
+    def _subject_language_override(self, subject: Optional[str]) -> Optional[bool]:
+        normalized = self._normalize_language_label(subject)
+        if not normalized:
+            return None
+
+        english_markers = {
+            "english",
+            "english language",
+            "language english",
+            "لغه انجليزي",
+            "اللغه الانجليزيه",
+            "لغه انجليزيه",
+            "انجليزي",
+            "انجليزيه",
+            "انجلش",
+        }
+        arabic_markers = {
+            "arabic",
+            "arabic language",
+            "language arabic",
+            "لغه عربي",
+            "اللغه العربيه",
+            "لغه عربيه",
+            "عربي",
+            "عربيه",
+        }
+
+        if normalized in english_markers or any(marker in normalized for marker in english_markers):
+            return False
+        if normalized in arabic_markers or any(marker in normalized for marker in arabic_markers):
+            return True
+        return None
+
+    def _should_generate_arabic_from_material(self, subject: Optional[str] = None, *values: Optional[str]) -> bool:
+        subject_override = self._subject_language_override(subject)
+        if subject_override is not None:
+            return subject_override
+
+        values = (subject, *values)
         material_text = " ".join(str(value) for value in values if value)
         return language_detector.should_use_arabic(material_text)
 
