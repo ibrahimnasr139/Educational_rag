@@ -26,7 +26,7 @@ class DifficultyLevel(str, Enum):
     """Question difficulty levels."""
     EASY = "easy"
     MEDIUM = "medium"
-    DIFFICULT = "difficult"
+    HARD = "hard"
     MIX = "mix"
 
 

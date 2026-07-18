@@ -76,7 +76,7 @@ class GenerateQuestionsRequest(BaseModel):
     @field_validator("difficulty", mode="before")
     @classmethod
     def normalize_difficulty(cls, v):
-        return "difficult" if v == "hard" else v
+        return "hard" if v == "difficult" else v
 
 
 class GenerateQuestionsResponse(RootModel[List[GeneratedQuestion]]):
@@ -244,7 +244,7 @@ class GenerateQuizRequest(BaseModel):
     @field_validator("difficulty", mode="before")
     @classmethod
     def normalize_difficulty(cls, v):
-        if v == "hard": return "difficult"
+        if v == "difficult": return "hard"
         if v == "mix": return "mix"
         return v
 
