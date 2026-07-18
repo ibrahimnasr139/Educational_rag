@@ -135,8 +135,15 @@ class QuestionService:
         parts = [metadata.course, metadata.module, metadata.title, metadata.description, metadata.subject, metadata.grade, prompt]
         return " ".join(filter(None, parts)) or "general education"
 
+    def _language_name(self, is_arabic: bool) -> str:
+        return "Arabic" if is_arabic else "English"
+
+    def _should_generate_arabic_from_material(self, *values: Optional[str]) -> bool:
+        material_text = " ".join(str(value) for value in values if value)
+        return language_detector.should_use_arabic(material_text)
+
     def _build_system_instruction(self, request: GenerateQuestionsRequest, is_arabic: bool) -> str:
-        lang = "Arabic" if is_arabic else "English"
+        lang = self._language_name(is_arabic)
         grade = request.metadata.grade if request.metadata else "General"
         subject = request.metadata.subject if request.metadata else "General"
         module = request.metadata.module if request.metadata else ""
@@ -144,11 +151,12 @@ class QuestionService:
 Generate high-quality questions based on the provided context.
 Requirements:
 - Generate in {lang}.
+- Match the output language to the learning material/content language, not to the curriculum label language.
 - For MCQ: provide 4 options with exactly one correct answer.
 - For True/False: correctAnswer must be "true" or "false".
 - For Short Answer: correctAnswer should be a concise model answer.
-- Use difficulty: easy, medium, difficult.
-- Assign marks between 1 and 5 based on difficulty (e.g., 1-2 for easy, 3 for medium, 4-5 for difficult).
+- Use difficulty: easy, medium, hard.
+- Assign marks between 1 and 5 based on difficulty (e.g., 1-2 for easy, 3 for medium, 4-5 for hard).
 - Age-appropriate for: {grade}.
 - Subject: {subject}. Module: {module}.
 Return JSON only."""
@@ -176,7 +184,7 @@ Return JSON only."""
                 "marks": "number",
                 "type": "mcq|true_false|short_answer",
                 "options": [{"id": "string", "label": "string", "isCorrect": "boolean"}],
-                "difficulty": "easy|medium|difficult",
+                "difficulty": "easy|medium|hard",
                 "correctAnswer": "string"
             }
         }
@@ -206,8 +214,8 @@ Return JSON only."""
                     q_type = QuestionType.MCQ.value
 
                 diff = q_data.get("difficulty", request.difficulty.value)
-                if diff == "hard":
-                    diff = "difficult"
+                if diff == "difficult":
+                    diff = "hard"
                 if diff not in [d.value for d in DifficultyLevel if d != DifficultyLevel.MIX]:
                     diff = DifficultyLevel.MEDIUM.value
 
@@ -342,19 +350,20 @@ Requirements: 2-3 sentences, suitable for the content type, no intro, final desc
 
     # --------------------------- new AI endpoints ---------------------------
     async def generate_flashcards(self, request: FlashcardsRequest) -> List[Flashcard]:
-        is_ar = language_detector.should_use_arabic(f"{request.subject} {request.chapter} {request.topic}")
+        is_ar = self._should_generate_arabic_from_material(request.subject, request.chapter, request.topic, request.goal)
+        language = self._language_name(is_ar)
         prompt = f"""Generate {request.numberOfCards} flashcards for:
 Subject: {request.subject}
 Chapter: {request.chapter}
 Topic: {request.topic}
 Grade/Level: {request.grade or ''}
 Goal: {request.goal or ''}
-Use {'Arabic' if is_ar else 'English'}.
+Use {language}. Match the language of the subject/topic/chapter content, not the curriculum label.
 Return JSON array only."""
         schema = {"type":"array","items":{"front":"string","back":"string"}}
-        system_instruction = "You create concise educational flashcards. Return JSON only."
+        system_instruction = f"You create concise educational flashcards in {language}. Return JSON only."
         if request.grade:
-            system_instruction = f"You create concise educational flashcards appropriate for the {request.grade} level. Return JSON only."
+            system_instruction = f"You create concise educational flashcards in {language}, appropriate for the {request.grade} level. Return JSON only."
         raw = await self._structured(prompt, schema, system_instruction)
         raw = self._safe_json(raw, [])
         if isinstance(raw, dict):
@@ -394,19 +403,20 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
         return AskAIResponse(question=raw.get("question", request.question), explanation=raw.get("explanation", ""), examples=raw.get("examples", []) or [])
 
     async def generate_quiz(self, request: GenerateQuizRequest) -> List[QuizQuestion]:
-        is_ar = language_detector.should_use_arabic(f"{request.subject} {request.chapter or ''}")
+        is_ar = self._should_generate_arabic_from_material(request.subject, request.chapter)
+        language = self._language_name(is_ar)
         prompt = f"""Generate {request.numberOfQuestions} MCQ quiz questions.
 Subject: {request.subject}
 Chapter: {request.chapter or ''}
 Grade/Level: {request.grade or ''}
-Difficulty: {request.difficulty}
-Use {'Arabic' if is_ar else 'English'}.
+Difficulty: {request.difficulty.value}
+Use {language}. Match the language of the subject/chapter content, not the curriculum label.
 Each question must have 4 options and exactly one correct option.
 Return JSON array only."""
         schema = {"type":"array","items":{"question":"string","options":[{"text":"string","isCorrect":"boolean"}],"explanation":"string","type":"mcq"}}
-        system_instruction = "You generate MCQ quizzes. Return JSON only."
+        system_instruction = f"You generate MCQ quizzes in {language}. Return JSON only."
         if request.grade:
-            system_instruction = f"You generate educational MCQ quizzes appropriate for the {request.grade} level. Return JSON only."
+            system_instruction = f"You generate educational MCQ quizzes in {language}, appropriate for the {request.grade} level. Return JSON only."
         raw = await self._structured(prompt, schema, system_instruction)
         raw = self._safe_json(raw, [])
         if isinstance(raw, dict):
