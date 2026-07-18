@@ -91,3 +91,13 @@ def test_english_generation_prompt_includes_metadata_and_strict_language_rule():
     assert ARABIC_ENGLISH_SUBJECT in prompt
     assert "English only" in system
     assert "Do not output Arabic text" in system
+
+
+def test_explicit_language_overrides_arabic_labels():
+    service = QuestionService()
+
+    assert not service._is_arabic_from_request_language(
+        GenerateQuizRequest(subject=ARABIC_ENGLISH_SUBJECT, chapter=ARABIC_TOPIC, language="en").language
+    )
+    assert GenerateQuizRequest(subject=ARABIC_ENGLISH_SUBJECT, chapter=ARABIC_TOPIC, outputLanguage="english").language == "en"
+    assert GenerateQuestionsRequest(language="arabic").language == "ar"

@@ -83,7 +83,12 @@ async def lifespan(app: FastAPI):
         database_service.init_db()
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
-        raise
+        if not settings.debug:
+            raise
+        logger.warning(
+            "Continuing startup without a verified database because debug mode is enabled. "
+            "Database-backed endpoints may fail until DATABASE_URL is reachable."
+        )
     yield
     logger.info("Shutting down...")
     await progress_tracker.close()

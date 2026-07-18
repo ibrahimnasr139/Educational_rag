@@ -39,6 +39,58 @@ function log(msg, type = 'info') {
     logBox.scrollTop = logBox.scrollHeight;
 }
 
+function normalizeLanguageLabel(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[\u064b-\u065f\u0670]/g, '')
+        .replace(/[\u0623\u0625\u0622]/g, '\u0627')
+        .replace(/\u0649/g, '\u064a')
+        .replace(/\u0629/g, '\u0647')
+        .replace(/\s+/g, ' ');
+}
+
+function inferOutputLanguage(...values) {
+    const normalized = values.map(normalizeLanguageLabel).filter(Boolean);
+    const joined = normalized.join(' ');
+
+    const englishMarkers = [
+        'english',
+        'english language',
+        'language english',
+        '\u0644\u063a\u0647 \u0627\u0646\u062c\u0644\u064a\u0632\u064a',
+        '\u0627\u0644\u0644\u063a\u0647 \u0627\u0644\u0627\u0646\u062c\u0644\u064a\u0632\u064a\u0647',
+        '\u0644\u063a\u0647 \u0627\u0646\u062c\u0644\u064a\u0632\u064a\u0647',
+        '\u0627\u0646\u062c\u0644\u064a\u0632\u064a',
+        '\u0627\u0646\u062c\u0644\u064a\u0632\u064a\u0647',
+        '\u0627\u0646\u062c\u0644\u0634'
+    ];
+
+    const arabicMarkers = [
+        'arabic',
+        'arabic language',
+        'language arabic',
+        '\u0644\u063a\u0647 \u0639\u0631\u0628\u064a',
+        '\u0627\u0644\u0644\u063a\u0647 \u0627\u0644\u0639\u0631\u0628\u064a\u0647',
+        '\u0644\u063a\u0647 \u0639\u0631\u0628\u064a\u0647',
+        '\u0639\u0631\u0628\u064a',
+        '\u0639\u0631\u0628\u064a\u0647'
+    ];
+
+    if (englishMarkers.some(marker => joined.includes(marker))) return 'en';
+    if (arabicMarkers.some(marker => joined.includes(marker))) return 'ar';
+    if (/[\u0600-\u06ff]/.test(joined)) return 'ar';
+    return 'en';
+}
+
+function renderPayloadDebug(container, endpoint, payload) {
+    const debug = document.createElement('pre');
+    debug.className = 'json-block';
+    debug.style.marginBottom = '12px';
+    debug.textContent = `${endpoint} payload:\n${JSON.stringify(payload, null, 2)}`;
+    container.appendChild(debug);
+}
+
 async function suggestMetadata(fileId) {
     if (!fileId) return;
 
@@ -425,6 +477,12 @@ function setupQA() {
             difficulty: document.getElementById('qa-difficulty').value,
             type: document.getElementById('qa-type').value
         };
+        payload.language = inferOutputLanguage(
+            payload.metadata.subject,
+            payload.metadata.grade,
+            payload.prompt
+        );
+        console.log('/api/ai-generate-questions payload', payload);
 
         try {
             const response = await fetch(`${API_URL}/api/ai-generate-questions`, {
@@ -436,7 +494,7 @@ function setupQA() {
             if (!response.ok) throw new Error(await response.text());
 
             const questions = await response.json();
-            renderQuestions(questions);
+            renderQuestions(questions, payload);
 
         } catch (error) {
             alert(`Error: ${error.message}`);
@@ -446,12 +504,13 @@ function setupQA() {
         }
     });
 
-    function renderQuestions(questions) {
+    function renderQuestions(questions, payload) {
         resultsContainer.classList.remove('hidden');
         resultsContainer.innerHTML = '';
+        renderPayloadDebug(resultsContainer, '/api/ai-generate-questions', payload);
 
         if (!Array.isArray(questions) || questions.length === 0) {
-            resultsContainer.innerHTML = '<p>No questions generated.</p>';
+            resultsContainer.insertAdjacentHTML('beforeend', '<p>No questions generated.</p>');
             return;
         }
 
@@ -762,6 +821,8 @@ function setupFlashcards() {
             goal: document.getElementById('flashcard-goal').value || null,
             numberOfCards: parseInt(document.getElementById('flashcard-count').value)
         };
+        payload.language = inferOutputLanguage(payload.subject, payload.chapter, payload.topic, payload.goal);
+        console.log('/api/generate-flashcards payload', payload);
 
         try {
             const response = await fetch(`${API_URL}/api/generate-flashcards`, {
@@ -774,8 +835,9 @@ function setupFlashcards() {
             const cards = await response.json();
             
             resultsContainer.classList.remove('hidden');
+            renderPayloadDebug(resultsContainer, '/api/generate-flashcards', payload);
             if (cards.length === 0) {
-                resultsContainer.innerHTML = '<p>No flashcards generated.</p>';
+                resultsContainer.insertAdjacentHTML('beforeend', '<p>No flashcards generated.</p>');
                 return;
             }
 
@@ -816,6 +878,8 @@ function setupQuiz() {
             difficulty: document.getElementById('quiz-difficulty').value,
             numberOfQuestions: parseInt(document.getElementById('quiz-count').value)
         };
+        payload.language = inferOutputLanguage(payload.subject, payload.chapter);
+        console.log('/api/generate-quiz payload', payload);
 
         try {
             const response = await fetch(`${API_URL}/api/generate-quiz`, {
@@ -828,8 +892,9 @@ function setupQuiz() {
             const questions = await response.json();
             
             resultsContainer.classList.remove('hidden');
+            renderPayloadDebug(resultsContainer, '/api/generate-quiz', payload);
             if (questions.length === 0) {
-                resultsContainer.innerHTML = '<p>No questions generated.</p>';
+                resultsContainer.insertAdjacentHTML('beforeend', '<p>No questions generated.</p>');
                 return;
             }
 
