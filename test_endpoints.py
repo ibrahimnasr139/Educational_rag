@@ -66,19 +66,19 @@ for path in ["/api/analytics/completion", "/api/analytics/performance", "/api/an
         log(f"GET {path}", FAIL, str(e))
 
 try:
-    r = requests.get(f"{BASE}/api/analytics/ai-analysis", timeout=60)
+    r = requests.get(f"{BASE}/api/ai-insights", timeout=60)
     body = r.json()
     # 200 with analysis key is pass (even if analysis says "no data")
     if r.status_code == 200 and "analysis" in body:
         # Check it didn't return the gemini_client AttributeError anymore
         if "gemini_client" in str(body.get("analysis", "")):
-            log("GET /api/analytics/ai-analysis", FAIL, f"gemini_client bug still present: {body['analysis'][:120]}")
+            log("GET /api/ai-insights", FAIL, f"gemini_client bug still present: {body['analysis'][:120]}")
         else:
-            log("GET /api/analytics/ai-analysis", PASS, str(body)[:120])
+            log("GET /api/ai-insights", PASS, str(body)[:120])
     else:
-        log("GET /api/analytics/ai-analysis", FAIL, f"status={r.status_code} body={r.text[:200]}")
+        log("GET /api/ai-insights", FAIL, f"status={r.status_code} body={r.text[:200]}")
 except Exception as e:
-    log("GET /api/analytics/ai-analysis", FAIL, str(e))
+    log("GET /api/ai-insights", FAIL, str(e))
 
 # ── 3. Chunk / Transcript GET ────────────────────────────────
 section("3. Chunk & Transcript Retrieval")
