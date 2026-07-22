@@ -1089,7 +1089,7 @@ function setupAnalytics() {
         btnAI.disabled = true;
 
         try {
-            const response = await fetch(`${API_URL}/api/analytics/ai-analysis`);
+            const response = await fetch(`${API_URL}/api/ai-insights`);
             if (!response.ok) throw new Error('Failed to generate AI analysis');
             const data = await response.json();
             aiContent.textContent = data.analysis;

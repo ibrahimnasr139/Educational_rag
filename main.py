@@ -387,7 +387,7 @@ async def get_revenue_analytics():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/analytics/ai-analysis")
+@app.get("/api/ai-insights")
 async def get_ai_analytics():
     try:
         analysis = await analytics_service.analyze_with_ai()
