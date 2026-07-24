@@ -50,6 +50,7 @@ from models.schemas import (
     QuizQuestion,
     AIAssistantRequest,
     AIAssistantResponse,
+    AIInsight,
 )
 from services import document_processing_service, question_service, progress_service
 from services.embedding_service import embedding_service
@@ -367,31 +368,30 @@ async def ai_assistant(request: AIAssistantRequest):
 
 # -------------------- Analytics endpoints --------------------
 @app.get("/api/analytics/completion")
-async def get_completion_analytics():
+async def get_completion_analytics(tenantId: int):
     try:
-        return analytics_service.get_completion_insights()
+        return analytics_service.get_completion_insights(tenantId)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/analytics/performance")
-async def get_performance_analytics():
+async def get_performance_analytics(tenantId: int):
     try:
-        return analytics_service.get_performance_insights()
+        return analytics_service.get_performance_insights(tenantId)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/analytics/revenue")
-async def get_revenue_analytics():
+async def get_revenue_analytics(tenantId: int):
     try:
-        return analytics_service.get_revenue_insights()
+        return analytics_service.get_revenue_insights(tenantId)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/ai-insights")
-async def get_ai_analytics():
+@app.get("/api/ai-insights", response_model=list[AIInsight])
+async def get_ai_analytics(tenantId: int):
     try:
-        analysis = await analytics_service.analyze_with_ai()
-        return {"analysis": analysis}
+        return await analytics_service.analyze_with_ai(tenantId)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

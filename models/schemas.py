@@ -312,3 +312,18 @@ class AIAssistantRequest(BaseModel):
 
 class AIAssistantResponse(BaseModel):
     response: str
+
+
+class AIInsightAction(BaseModel):
+    label: str
+
+
+class AIInsight(BaseModel):
+    id: str
+    type: Literal["urgent", "warning", "critical", "success", "info"]
+    category: Literal["completion", "performance", "revenue"]
+    title: str
+    description: str
+    confidence: Literal["high", "medium", "low"]
+    suggestedActions: List[AIInsightAction] = Field(default_factory=list)
+    courseName: Optional[str] = None

@@ -1028,6 +1028,10 @@ function setupAssistant() {
 
 // Analytics Logic
 function setupAnalytics() {
+    const tenantId = new URLSearchParams(window.location.search).get('tenantId');
+    const analyticsUrl = (path) => tenantId
+        ? `${API_URL}${path}?tenantId=${encodeURIComponent(tenantId)}`
+        : `${API_URL}${path}`;
     const btnCompletion = document.getElementById('btn-refresh-completion');
     const btnPerformance = document.getElementById('btn-refresh-performance');
     const btnRevenue = document.getElementById('btn-refresh-revenue');
@@ -1047,7 +1051,7 @@ function setupAnalytics() {
         tableContainer.innerHTML = '<p>Loading...</p>';
 
         try {
-            const response = await fetch(`${API_URL}/api/analytics/${endpoint}`);
+            const response = await fetch(analyticsUrl(`/api/analytics/${endpoint}`));
             if (!response.ok) throw new Error('Failed to fetch analytics');
             const data = await response.json();
             
@@ -1089,10 +1093,10 @@ function setupAnalytics() {
         btnAI.disabled = true;
 
         try {
-            const response = await fetch(`${API_URL}/api/ai-insights`);
+            const response = await fetch(analyticsUrl('/api/ai-insights'));
             if (!response.ok) throw new Error('Failed to generate AI analysis');
             const data = await response.json();
-            aiContent.textContent = data.analysis;
+            aiContent.textContent = data.length ? JSON.stringify(data, null, 2) : 'No actionable insights.';
         } catch (error) {
             aiContent.textContent = `Error: ${error.message}`;
         } finally {

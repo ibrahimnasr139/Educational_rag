@@ -13,6 +13,7 @@ import os
 import time
 
 BASE = "http://localhost:8000"
+TENANT_ID = int(os.getenv("TEST_TENANT_ID", "8"))
 PASS = "[PASS]"
 FAIL = "[FAIL]"
 SKIP = "[SKIP]"
@@ -57,7 +58,7 @@ section("2. Analytics Endpoints")
 
 for path in ["/api/analytics/completion", "/api/analytics/performance", "/api/analytics/revenue"]:
     try:
-        r = requests.get(f"{BASE}{path}", timeout=15)
+        r = requests.get(f"{BASE}{path}", params={"tenantId": TENANT_ID}, timeout=15)
         if r.status_code == 200:
             log(f"GET {path}", PASS, str(r.json())[:120])
         else:
@@ -66,15 +67,10 @@ for path in ["/api/analytics/completion", "/api/analytics/performance", "/api/an
         log(f"GET {path}", FAIL, str(e))
 
 try:
-    r = requests.get(f"{BASE}/api/ai-insights", timeout=60)
+    r = requests.get(f"{BASE}/api/ai-insights", params={"tenantId": TENANT_ID}, timeout=60)
     body = r.json()
-    # 200 with analysis key is pass (even if analysis says "no data")
-    if r.status_code == 200 and "analysis" in body:
-        # Check it didn't return the gemini_client AttributeError anymore
-        if "gemini_client" in str(body.get("analysis", "")):
-            log("GET /api/ai-insights", FAIL, f"gemini_client bug still present: {body['analysis'][:120]}")
-        else:
-            log("GET /api/ai-insights", PASS, str(body)[:120])
+    if r.status_code == 200 and isinstance(body, list):
+        log("GET /api/ai-insights", PASS, str(body)[:120])
     else:
         log("GET /api/ai-insights", FAIL, f"status={r.status_code} body={r.text[:200]}")
 except Exception as e:
