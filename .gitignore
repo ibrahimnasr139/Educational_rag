@@ -62,6 +62,8 @@ htmlcov/
 # Temporary files
 tmp/
 temp/
+scratch/
+.codex-gh/
 *.tmp
 
 # Dhakira (if cloned locally)

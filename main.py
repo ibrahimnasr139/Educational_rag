@@ -261,7 +261,7 @@ async def embed_file(
             download_url = f"https://vz-51ee5657-212.b-cdn.net/{file_id_val}/original"
             headers = {
                 "AccessKey": settings.bunny_access_key,
-                "Referer": "https://www.waey.online/"
+                "Referer": "https://ai.nabrahq.com/"
             }
             from services.progress_service import progress_service
             await progress_service.start_job(job_id, callback_url_val)
