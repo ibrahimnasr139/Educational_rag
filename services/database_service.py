@@ -43,10 +43,9 @@ class DatabaseService:
         db_url = make_url(settings.database_url)
         connect_args = {}
         if db_url.drivername.startswith("postgresql"):
-            connect_args = {
-                "sslmode": "require",
-                "application_name": "railway-app"
-            }
+            connect_args = {"application_name": "railway-app"}
+            if "sslmode" not in (db_url.query or {}) and "railway.internal" not in (db_url.host or ""):
+                connect_args["sslmode"] = "prefer"
 
         self.engine = create_engine(
             settings.database_url,
