@@ -123,6 +123,9 @@ async def health_check():
     return {
         "status": "healthy",
         "database": stats,
+        "deployment": {
+            "commit": os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT_SHA") or os.getenv("SOURCE_VERSION"),
+        },
         "settings": {
             "whisper_model": settings.whisper_model,
             "transcription_provider": settings.transcription_provider,

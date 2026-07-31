@@ -38,13 +38,30 @@ class AnalyticsService:
     def get_performance_insights(self, tenant_id: int):
         try:
             query = """
-            SELECT 
-                AVG(CAST(g."Score" AS FLOAT) / NULLIF(g."TotalMarks", 0) * 100.0) as avg_grade,
-                COUNT(DISTINCT g."StudentId") as student_count,
-                COUNT(g."Id") as grades_count
-            FROM "StudentGrades" g
-            WHERE g."TenantId" = :tenant_id
-            HAVING COUNT(g."Id") > 0
+            SELECT
+                (
+                    SELECT AVG(CAST(g."Score" AS FLOAT) / NULLIF(g."TotalMarks", 0) * 100.0)
+                    FROM "StudentGrades" g
+                    WHERE g."TenantId" = :tenant_id
+                      AND g."TotalMarks" > 1
+                ) as avg_grade,
+                (
+                    SELECT COUNT(DISTINCT e."StudentId")
+                    FROM "Enrollments" e
+                    WHERE e."TenantId" = :tenant_id
+                ) as student_count,
+                (
+                    SELECT COUNT(g."Id")
+                    FROM "StudentGrades" g
+                    WHERE g."TenantId" = :tenant_id
+                      AND g."TotalMarks" > 1
+                ) as grades_count
+            WHERE EXISTS (
+                SELECT 1
+                FROM "StudentGrades" g
+                WHERE g."TenantId" = :tenant_id
+                  AND g."TotalMarks" > 1
+            )
             """
             return self._execute(query, {"tenant_id": tenant_id})
         except Exception as e:
