@@ -1,5 +1,5 @@
 """
-RAG service integrating Dhakira embeddings with Google Gemini for generation.
+RAG service integrating embeddings with OpenAI/Gemini generation.
 Handles retrieval-augmented generation for question creation and descriptions.
 """
 
@@ -17,27 +17,18 @@ from utils.metadata_extractor import compact_metadata
 logger = logging.getLogger(__name__)
 
 
-# Monkey-patch OpenAILLM to fail fast on permanent quota errors (insufficient_quota)
-try:
-    from dhakira.llm.openai_ import OpenAILLM
-    import json
-    
-    def patched_get_client(self):
-        if self._client is None:
-            from openai import AsyncOpenAI
+class DirectOpenAILLM:
+    """Small OpenAI SDK wrapper matching the generate interface used by RAGService."""
 
-            kwargs = {}
-            if self.config.api_key:
-                kwargs["api_key"] = self.config.api_key
-            if self.config.base_url:
-                kwargs["base_url"] = self.config.base_url
-            kwargs["max_retries"] = 0
+    def __init__(self, api_key: str, model: str, temperature: float, max_tokens: int):
+        from openai import AsyncOpenAI
 
-            self._client = AsyncOpenAI(**kwargs)
-        return self._client
+        self.client = AsyncOpenAI(api_key=api_key, max_retries=0)
+        self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
 
-    async def patched_generate(self, prompt: str, system: str | None = None) -> str:
-        client = self._get_client()
+    async def generate(self, prompt: str, system: Optional[str] = None) -> str:
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -47,77 +38,41 @@ try:
             try:
                 if attempt > 0:
                     wait = min(2 ** attempt, 8)
-                    logger.info("Rate limited, retrying in %ss (attempt %s)", wait, attempt + 1)
+                    logger.info("OpenAI rate limited, retrying in %ss (attempt %s)", wait, attempt + 1)
                     await asyncio.sleep(wait)
 
-                response = await client.chat.completions.create(
-                    model=self.config.model,
+                response = await self.client.chat.completions.create(
+                    model=self.model,
                     messages=messages,
-                    temperature=self.config.temperature,
-                    max_tokens=self.config.max_tokens,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
                 )
-                if response.usage:
-                    self._track_usage(response.usage.prompt_tokens, response.usage.completion_tokens)
                 return response.choices[0].message.content or ""
             except Exception as e:
-                if "insufficient_quota" in str(e).lower():
+                error_text = str(e).lower()
+                if "insufficient_quota" in error_text:
                     raise
-                if "429" in str(e) and attempt < 3:
+                if "429" in error_text and attempt < 3:
                     continue
                 raise
 
-    async def patched_generate_structured(self, prompt: str, schema: dict, system: str | None = None) -> dict:
-        client = self._get_client()
-        messages = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-
-        for attempt in range(4):
-            try:
-                if attempt > 0:
-                    wait = min(2 ** attempt, 8)
-                    logger.info("Rate limited, retrying in %ss (attempt %s)", wait, attempt + 1)
-                    await asyncio.sleep(wait)
-
-                response = await client.chat.completions.create(
-                    model=self.config.model,
-                    messages=messages,
-                    temperature=self.config.temperature,
-                    max_tokens=self.config.max_tokens,
-                    response_format={"type": "json_object"},
-                )
-                if response.usage:
-                    self._track_usage(response.usage.prompt_tokens, response.usage.completion_tokens)
-
-                content = response.choices[0].message.content or "{}"
-                cleaned = content.strip()
-                if cleaned.startswith("```json"):
-                    cleaned = cleaned[7:]
-                elif cleaned.startswith("```"):
-                    cleaned = cleaned[3:]
-                if cleaned.endswith("```"):
-                    cleaned = cleaned[:-3]
-                cleaned = cleaned.strip()
-
-                try:
-                    return json.loads(cleaned)
-                except json.JSONDecodeError:
-                    logger.warning("Failed to parse structured LLM response: %s", content[:200])
-                    return {}
-            except Exception as e:
-                if "insufficient_quota" in str(e).lower():
-                    raise
-                if "429" in str(e) and attempt < 3:
-                    continue
-                raise
-
-    OpenAILLM._get_client = patched_get_client
-    OpenAILLM.generate = patched_generate
-    OpenAILLM.generate_structured = patched_generate_structured
-    logger.info("Monkey-patched dhakira OpenAILLM to fail fast on insufficient_quota")
-except Exception as patch_err:
-    logger.warning(f"Could not monkey-patch OpenAILLM: {patch_err}")
+    async def generate_structured(self, prompt: str, schema: dict, system: Optional[str] = None) -> dict:
+        response = await self.generate(
+            prompt=f"{prompt}\n\nReturn only JSON matching this schema:\n{json.dumps(schema, ensure_ascii=False)}",
+            system=system,
+        )
+        cleaned = response.strip()
+        if cleaned.startswith("```json"):
+            cleaned = cleaned[7:]
+        elif cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        try:
+            return json.loads(cleaned.strip())
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse structured OpenAI response: %s", response[:200])
+            return {}
 
 
 class RAGService:
@@ -139,35 +94,27 @@ class RAGService:
             "temperature": settings.gemini_temperature,
             "max_output_tokens": settings.gemini_max_tokens if settings.gemini_max_tokens > 4096 else 8192,
         }
-        # Always initialize OpenAI if key is present to allow forcing
         self.openai_llm = None
         self.gpt4_nano_llm = None
         if getattr(settings, "openai_api_key", None):
             try:
-                from dhakira.config import LLMConfig
-                from dhakira.llm.openai_ import OpenAILLM
-                
-                config = LLMConfig(
+                self.openai_llm = DirectOpenAILLM(
                     api_key=settings.openai_api_key,
                     model=settings.openai_model,
                     temperature=settings.openai_temperature,
-                    max_tokens=settings.openai_max_tokens
+                    max_tokens=settings.openai_max_tokens,
                 )
-                self.openai_llm = OpenAILLM(config)
                 
                 # Special instance for gpt-4.1-nano (custom model requested by user)
-                gpt4_nano_config = LLMConfig(
+                self.gpt4_nano_llm = DirectOpenAILLM(
                     api_key=settings.openai_api_key,
                     model="gpt-4.1-nano",
                     temperature=0.7, 
-                    max_tokens=settings.openai_max_tokens
+                    max_tokens=settings.openai_max_tokens,
                 )
-                self.gpt4_nano_llm = OpenAILLM(gpt4_nano_config)
-                logger.info(f"OpenAI fallback initialized ({settings.openai_model} & gpt-4.1-nano)")
-            except ImportError as e:
-                logger.warning(f"Dhakira not available, OpenAI fallback disabled. Error: {e}")
+                logger.info(f"OpenAI generation initialized ({settings.openai_model} & gpt-4.1-nano)")
             except Exception as e:
-                logger.warning(f"Failed to initialize OpenAI fallback: {e}")
+                logger.warning(f"Failed to initialize OpenAI generation: {e}")
 
         # Always initialize Gemini client as a fallback — even when OpenAI is the primary provider.
         # This prevents AttributeError in quota-exceeded fallback paths.
@@ -191,7 +138,7 @@ class RAGService:
             logger.info(f"RAG Service default initialized with OpenAI ({settings.openai_model})")
         else:
             if self.provider == "openai" and not self.openai_llm:
-                logger.warning("LLM provider is set to 'openai' but OpenAI fallback is unavailable; falling back to Gemini")
+                logger.warning("LLM provider is set to 'openai' but OpenAI is unavailable; falling back to Gemini")
                 self.provider = "gemini"
             if not self.gemini_client:
                 raise RuntimeError("Neither OpenAI nor Gemini could be initialized. Check API keys.")

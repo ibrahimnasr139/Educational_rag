@@ -30,10 +30,10 @@ try:
         sys.path.insert(0, _dhakira_src)
     from dhakira import Memory
     DHAKIRA_AVAILABLE = True
-    logger.info("✓ Dhakira available")
+    logger.info("Dhakira available")
 except ImportError as e:
     DHAKIRA_AVAILABLE = False
-    logger.warning(f"Dhakira not available, using fallback embedding model. Error: {e}")
+    logger.info(f"Dhakira not available; using configured embedding fallback. Error: {e}")
 
 class EmbeddingService:
     """
