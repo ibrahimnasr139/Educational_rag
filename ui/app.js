@@ -1028,10 +1028,18 @@ function setupAssistant() {
 
 // Analytics Logic
 function setupAnalytics() {
-    const tenantId = new URLSearchParams(window.location.search).get('tenantId');
-    const analyticsUrl = (path) => tenantId
-        ? `${API_URL}${path}?tenantId=${encodeURIComponent(tenantId)}`
-        : `${API_URL}${path}`;
+    const tenantInput = document.getElementById('analytics-tenant-id');
+    const initialTenantId = new URLSearchParams(window.location.search).get('tenantId');
+    if (initialTenantId && tenantInput) {
+        tenantInput.value = initialTenantId;
+    }
+    const analyticsUrl = (path) => {
+        const tenantId = tenantInput?.value?.trim();
+        if (!tenantId || !Number.isInteger(Number(tenantId)) || Number(tenantId) < 1) {
+            throw new Error('Enter a valid numeric Tenant ID.');
+        }
+        return `${API_URL}${path}?tenantId=${encodeURIComponent(tenantId)}`;
+    };
     const btnCompletion = document.getElementById('btn-refresh-completion');
     const btnPerformance = document.getElementById('btn-refresh-performance');
     const btnRevenue = document.getElementById('btn-refresh-revenue');
