@@ -391,7 +391,8 @@ async def get_ai_analytics(tenantId: int):
     try:
         return await analytics_service.analyze_with_ai(tenantId)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("AI insights endpoint failed for tenant %s: %s", tenantId, e)
+        return []
 
 
 # -------------------- Existing helper endpoints --------------------
