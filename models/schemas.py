@@ -4,7 +4,7 @@ Compatible with Pydantic v2.
 """
 from __future__ import annotations
 
-from pydantic import AliasChoices, BaseModel, Field, field_validator, RootModel, ConfigDict
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator, RootModel, ConfigDict
 from typing import List, Optional, Dict, Any, Literal
 from models.enums import FileType, QuestionType, DifficultyLevel, ProcessingStatus, ProcessingStage
 
@@ -317,6 +317,20 @@ class AIAssistantResponse(BaseModel):
 class AIInsightAction(BaseModel):
     label: str
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_action(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return {"label": v}
+        if isinstance(v, dict):
+            if "label" in v and isinstance(v["label"], str):
+                return v
+            if "action" in v:
+                return {"label": str(v["action"])}
+            if "text" in v:
+                return {"label": str(v["text"])}
+        return v
+
 
 class AIInsight(BaseModel):
     id: str
@@ -327,3 +341,46 @@ class AIInsight(BaseModel):
     confidence: Literal["high", "medium", "low"]
     suggestedActions: List[AIInsightAction] = Field(default_factory=list)
     courseName: Optional[str] = None
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def normalize_id(cls, v: Any) -> str:
+        return str(v) if v is not None else "1"
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def normalize_type(cls, v: Any) -> str:
+        val = str(v).lower().strip() if v else "info"
+        mapping = {
+            "danger": "critical",
+            "error": "critical",
+            "alert": "urgent",
+            "warn": "warning",
+        }
+        val = mapping.get(val, val)
+        if val not in {"urgent", "warning", "critical", "success", "info"}:
+            return "info"
+        return val
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def normalize_category(cls, v: Any) -> str:
+        val = str(v).lower().strip() if v else "completion"
+        if "comp" in val:
+            return "completion"
+        if "perf" in val or "grade" in val:
+            return "performance"
+        if "rev" in val or "order" in val or "money" in val:
+            return "revenue"
+        return "completion"
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def normalize_confidence(cls, v: Any) -> str:
+        val = str(v).lower().strip() if v else "medium"
+        if "high" in val:
+            return "high"
+        if "low" in val:
+            return "low"
+        return "medium"
+

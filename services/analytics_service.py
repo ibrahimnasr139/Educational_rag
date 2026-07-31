@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 
 class AnalyticsService:
     MIN_SAMPLE_SIZE = 3
+    VALID_TYPES = {"urgent", "warning", "critical", "success", "info"}
+    VALID_CONFIDENCE = {"high", "medium", "low"}
     
     def _execute(self, query, params=None):
         with database_service.get_session() as session:
@@ -96,25 +98,106 @@ class AnalyticsService:
             eligible.add("revenue")
         return eligible
 
+    def _normalize_candidate(self, candidate: dict, insight_id: int) -> dict:
+        normalized = dict(candidate)
+        normalized["id"] = str(insight_id)
+
+        if normalized.get("type") not in self.VALID_TYPES:
+            normalized["type"] = "info"
+        if normalized.get("confidence") not in self.VALID_CONFIDENCE:
+            normalized["confidence"] = "medium"
+
+        actions = normalized.get("suggestedActions") or []
+        normalized_actions = []
+        for action in actions:
+            if isinstance(action, dict) and action.get("label"):
+                normalized_actions.append({"label": str(action["label"])})
+            elif isinstance(action, str) and action.strip():
+                normalized_actions.append({"label": action.strip()})
+        normalized["suggestedActions"] = normalized_actions
+
+        if "courseName" in normalized and normalized["courseName"] is not None:
+            normalized["courseName"] = str(normalized["courseName"])
+
+        return normalized
+
+    def _generate_fallback_insights(self, completion, performance, revenue, eligible_categories) -> list[AIInsight]:
+        insights = []
+        if "completion" in eligible_categories:
+            for row in completion:
+                if int(row.get("student_count") or 0) >= self.MIN_SAMPLE_SIZE:
+                    title = row.get("title") or "الدورة"
+                    avg_progress = float(row.get("avg_progress") or 0.0)
+                    insight_type = "warning" if avg_progress < 50.0 else "info"
+                    insights.append(AIInsight(
+                        id=str(len(insights) + 1),
+                        type=insight_type,
+                        category="completion",
+                        title=f"معدل إكمال دورة {title}",
+                        description=f"بلغ متوسط إكمال الطلاب في دورة {title} نسبة {avg_progress:.1f}%.",
+                        confidence="high",
+                        suggestedActions=[
+                            {"label": "أنشئ فيديو ملخص قصير (3-5 دقائق) للوحدات القادمة"},
+                            {"label": "أرسل رسالة متابعة للطلاب غير النشطين"}
+                        ],
+                        courseName=title
+                    ))
+
+        if "performance" in eligible_categories:
+            for row in performance:
+                if int(row.get("student_count") or 0) >= self.MIN_SAMPLE_SIZE:
+                    avg_grade = float(row.get("avg_grade") or 0.0)
+                    insight_type = "warning" if avg_grade < 70.0 else "success"
+                    insights.append(AIInsight(
+                        id=str(len(insights) + 1),
+                        type=insight_type,
+                        category="performance",
+                        title="تحليل درجات الطلاب الأكاديمية",
+                        description=f"متوسط درجات الطلاب هو {avg_grade:.1f}%.",
+                        confidence="high",
+                        suggestedActions=[
+                            {"label": "تقديم اختبارات تجريبية ومراجعات إضافية"}
+                        ]
+                    ))
+
+        if "revenue" in eligible_categories and len(revenue) >= 2:
+            current_rev = float(revenue[0].get("total_revenue_egp") or 0.0)
+            prev_rev = float(revenue[1].get("total_revenue_egp") or 0.0)
+            diff = current_rev - prev_rev
+            trend_str = "ارتفعت" if diff >= 0 else "انخفضت"
+            insight_type = "success" if diff >= 0 else "warning"
+            insights.append(AIInsight(
+                id=str(len(insights) + 1),
+                type=insight_type,
+                category="revenue",
+                title="مؤشر إيرادات الاشتراكات الشهرية",
+                description=f"{trend_str} الإيرادات الشهرية لتبلغ {current_rev:.0f} جنيه مصري.",
+                confidence="high",
+                suggestedActions=[
+                    {"label": "متابعة أداء الحملات التسويقية والخصومات"}
+                ]
+            ))
+
+        return insights
+
     async def analyze_with_ai(self, tenant_id: int) -> list[AIInsight]:
-        try:
-            completion = self.get_completion_insights(tenant_id)
-            performance = self.get_performance_insights(tenant_id)
-            revenue = self.get_revenue_insights(tenant_id)
-            eligible_categories = self._eligible_categories(completion, performance, revenue)
+        completion = self.get_completion_insights(tenant_id)
+        performance = self.get_performance_insights(tenant_id)
+        revenue = self.get_revenue_insights(tenant_id)
+        eligible_categories = self._eligible_categories(completion, performance, revenue)
 
-            if not eligible_categories:
-                return []
+        if not eligible_categories:
+            return []
 
-            analytics_data = {
-                "completion_rates": completion,
-                "student_performance": performance,
-                "revenue_trends": revenue,
-                "revenue_currency": "EGP",
-                "eligible_categories": sorted(eligible_categories),
-            }
+        analytics_data = {
+            "completion_rates": completion,
+            "student_performance": performance,
+            "revenue_trends": revenue,
+            "revenue_currency": "EGP",
+            "eligible_categories": sorted(eligible_categories),
+        }
 
-            prompt = f"""
+        prompt = f"""
 Analyze the following LMS data and return ONLY a valid JSON array.
 
 DATA:
@@ -140,12 +223,14 @@ Rules:
 - Revenue is in Egyptian pounds (EGP). Say "جنيه مصري" and never use dollars or the $ symbol.
 - All titles, descriptions, and suggested actions must be in Arabic.
 - Do not include markdown, explanations, or a wrapper object.
-            """
+        """
 
-            system = (
-                "You are a precise LMS data analyst. Output evidence-based JSON only. "
-                "If the evidence is insufficient, output an empty JSON array."
-            )
+        system = (
+            "You are a precise LMS data analyst. Output evidence-based JSON only. "
+            "If the evidence is insufficient, output an empty JSON array."
+        )
+
+        try:
             response = await rag_service.generate_directly(prompt=prompt, system_instruction=system)
             candidates = self._parse_json_array(response)
 
@@ -154,18 +239,20 @@ Rules:
                 if not isinstance(candidate, dict) or candidate.get("category") not in eligible_categories:
                     continue
                 try:
-                    candidate["id"] = str(len(insights) + 1)
-                    insight = AIInsight.model_validate(candidate)
+                    normalized = self._normalize_candidate(candidate, len(insights) + 1)
+                    insight = AIInsight.model_validate(normalized)
                     if insight.category == "revenue":
                         revenue_text = f"{insight.title} {insight.description}".lower()
                         if "$" in revenue_text or "usd" in revenue_text or "دولار" in revenue_text:
                             continue
                     insights.append(insight)
-                except ValidationError:
-                    logger.warning("Discarding invalid AI insight payload: %s", candidate)
+                except ValidationError as ve:
+                    logger.warning("Discarding invalid AI insight payload (%s): %s", ve, candidate)
+
             return insights
         except Exception as e:
             logger.error(f"AI Analytics analysis failed: {e}")
-            return []
+            return self._generate_fallback_insights(completion, performance, revenue, eligible_categories)
 
 analytics_service = AnalyticsService()
+

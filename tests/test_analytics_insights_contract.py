@@ -56,6 +56,16 @@ async def test_insights_follow_the_array_contract(monkeypatch):
     result = await service.analyze_with_ai(8)
 
     assert len(result) == 1
+    assert result[0].model_dump().keys() == {
+        "id",
+        "type",
+        "category",
+        "title",
+        "description",
+        "confidence",
+        "suggestedActions",
+        "courseName",
+    }
     assert result[0].id == "1"
     assert result[0].category == "completion"
     assert result[0].courseName == "JavaScript Bootcamp"
@@ -89,3 +99,63 @@ async def test_revenue_insight_using_dollars_is_discarded(monkeypatch):
     monkeypatch.setattr(rag_service, "generate_directly", fake_generation)
 
     assert await service.analyze_with_ai(8) == []
+
+
+@pytest.mark.asyncio
+async def test_string_suggested_actions_normalized(monkeypatch):
+    service = AnalyticsService()
+    monkeypatch.setattr(
+        service,
+        "get_completion_insights",
+        lambda tenant_id: [{"title": "JavaScript Bootcamp", "avg_progress": 32, "student_count": 5}],
+    )
+    monkeypatch.setattr(service, "get_performance_insights", lambda tenant_id: [])
+    monkeypatch.setattr(service, "get_revenue_insights", lambda tenant_id: [])
+
+    async def fake_generation(**kwargs):
+        return """[
+            {
+                "id": "1",
+                "type": "warning",
+                "category": "completion",
+                "title": "عنوان التجربة",
+                "description": "وصف التجربة",
+                "confidence": "high",
+                "suggestedActions": ["خطوة أولى", "خطوة ثانية"],
+                "courseName": "JavaScript Bootcamp"
+            }
+        ]"""
+
+    monkeypatch.setattr(rag_service, "generate_directly", fake_generation)
+
+    result = await service.analyze_with_ai(8)
+
+    assert len(result) == 1
+    assert len(result[0].suggestedActions) == 2
+    assert result[0].suggestedActions[0].label == "خطوة أولى"
+    assert result[0].suggestedActions[1].label == "خطوة ثانية"
+
+
+@pytest.mark.asyncio
+async def test_fallback_insights_generated_when_llm_fails(monkeypatch):
+    service = AnalyticsService()
+    monkeypatch.setattr(
+        service,
+        "get_completion_insights",
+        lambda tenant_id: [{"title": "JavaScript Bootcamp", "avg_progress": 32, "student_count": 5}],
+    )
+    monkeypatch.setattr(service, "get_performance_insights", lambda tenant_id: [])
+    monkeypatch.setattr(service, "get_revenue_insights", lambda tenant_id: [])
+
+    async def failing_generation(**kwargs):
+        raise RuntimeError("LLM API Quota Exceeded")
+
+    monkeypatch.setattr(rag_service, "generate_directly", failing_generation)
+
+    result = await service.analyze_with_ai(8)
+
+    assert len(result) == 1
+    assert result[0].category == "completion"
+    assert result[0].courseName == "JavaScript Bootcamp"
+    assert len(result[0].suggestedActions) >= 1
+
