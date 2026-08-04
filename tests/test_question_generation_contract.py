@@ -101,3 +101,21 @@ def test_explicit_language_overrides_arabic_labels():
     )
     assert GenerateQuizRequest(subject=ARABIC_ENGLISH_SUBJECT, chapter=ARABIC_TOPIC, outputLanguage="english").language == "en"
     assert GenerateQuestionsRequest(language="arabic").language == "ar"
+
+
+def test_quiz_accepts_main_api_course_language_aliases():
+    request = GenerateQuizRequest(
+        subject=ARABIC_TOPIC,
+        chapter=ARABIC_GRAMMAR,
+        courseName=ARABIC_ENGLISH_SUBJECT,
+        contentLanguage=ARABIC_ENGLISH_SUBJECT,
+    )
+    service = QuestionService()
+
+    assert request.course == ARABIC_ENGLISH_SUBJECT
+    assert request.language == "en"
+    assert not service._should_generate_arabic_from_material(
+        request.subject,
+        request.course,
+        request.chapter,
+    )

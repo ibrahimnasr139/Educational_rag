@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import unicodedata
 from typing import List, Dict, Any, Optional
 
 from models.schemas import (
@@ -158,14 +159,16 @@ class QuestionService:
 
     def _normalize_language_label(self, value: Optional[str]) -> str:
         text = str(value or "").strip().lower()
+        text = unicodedata.normalize("NFKD", text)
         for src, dst in {
-            "أ": "ا",
-            "إ": "ا",
-            "آ": "ا",
-            "ى": "ي",
-            "ة": "ه",
+            "\u0623": "\u0627",
+            "\u0625": "\u0627",
+            "\u0622": "\u0627",
+            "\u0649": "\u064a",
+            "\u0629": "\u0647",
         }.items():
             text = text.replace(src, dst)
+        text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
         return " ".join(text.split())
 
     def _subject_language_override(self, subject: Optional[str]) -> Optional[bool]:
@@ -177,22 +180,22 @@ class QuestionService:
             "english",
             "english language",
             "language english",
-            "لغه انجليزي",
-            "اللغه الانجليزيه",
-            "لغه انجليزيه",
-            "انجليزي",
-            "انجليزيه",
-            "انجلش",
+            "\u0644\u063a\u0647 \u0627\u0646\u062c\u0644\u064a\u0632\u064a",
+            "\u0627\u0644\u0644\u063a\u0647 \u0627\u0644\u0627\u0646\u062c\u0644\u064a\u0632\u064a\u0647",
+            "\u0644\u063a\u0647 \u0627\u0646\u062c\u0644\u064a\u0632\u064a\u0647",
+            "\u0627\u0646\u062c\u0644\u064a\u0632\u064a",
+            "\u0627\u0646\u062c\u0644\u064a\u0632\u064a\u0647",
+            "\u0627\u0646\u062c\u0644\u0634",
         }
         arabic_markers = {
             "arabic",
             "arabic language",
             "language arabic",
-            "لغه عربي",
-            "اللغه العربيه",
-            "لغه عربيه",
-            "عربي",
-            "عربيه",
+            "\u0644\u063a\u0647 \u0639\u0631\u0628\u064a",
+            "\u0627\u0644\u0644\u063a\u0647 \u0627\u0644\u0639\u0631\u0628\u064a\u0647",
+            "\u0644\u063a\u0647 \u0639\u0631\u0628\u064a\u0647",
+            "\u0639\u0631\u0628\u064a",
+            "\u0639\u0631\u0628\u064a\u0647",
         }
 
         if normalized in english_markers or any(marker in normalized for marker in english_markers):
@@ -502,11 +505,24 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
     async def generate_quiz(self, request: GenerateQuizRequest) -> List[QuizQuestion]:
         is_ar = self._is_arabic_from_request_language(request.language)
         if is_ar is None:
-            is_ar = self._should_generate_arabic_from_material(request.subject, request.chapter)
+            is_ar = self._should_generate_arabic_from_material(
+                request.subject,
+                request.course,
+                request.module,
+                request.chapter,
+                request.lesson,
+                request.title,
+                request.description,
+            )
         language = self._language_name(is_ar)
         prompt = f"""Generate {request.numberOfQuestions} MCQ quiz questions.
 Subject: {request.subject}
+Course: {request.course or ''}
+Module: {request.module or ''}
 Chapter: {request.chapter or ''}
+Lesson: {request.lesson or ''}
+Title: {request.title or ''}
+Description: {request.description or ''}
 Grade/Level: {request.grade or ''}
 Difficulty: {request.difficulty.value}
 Use {language}.

@@ -263,12 +263,20 @@ class AskAIResponse(BaseModel):
 
 class GenerateQuizRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    subject: str = Field(..., validation_alias="topic")
+    subject: str = Field(..., validation_alias=AliasChoices("subject", "topic"))
     numberOfQuestions: int = Field(default=10, ge=1, le=50, validation_alias="questionsNumber")
     difficulty: DifficultyLevel = Field(default=DifficultyLevel.MEDIUM)
-    chapter: Optional[str] = Field(default=None, validation_alias="module")
+    chapter: Optional[str] = Field(default=None, validation_alias=AliasChoices("chapter", "module"))
     grade: Optional[str] = ""
-    language: Optional[str] = Field(default=None, validation_alias=AliasChoices("language", "outputLanguage", "lang"))
+    course: Optional[str] = Field(default="", validation_alias=AliasChoices("course", "courseName"))
+    module: Optional[str] = Field(default="", validation_alias=AliasChoices("moduleName", "moduleTitle"))
+    lesson: Optional[str] = Field(default="", validation_alias=AliasChoices("lesson", "lessonName", "lessonTitle"))
+    title: Optional[str] = ""
+    description: Optional[str] = ""
+    language: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("language", "outputLanguage", "lang", "contentLanguage", "sourceLanguage"),
+    )
 
     @field_validator("difficulty", mode="before")
     @classmethod
@@ -283,9 +291,14 @@ class GenerateQuizRequest(BaseModel):
         if v is None:
             return None
         value = str(v).strip().lower()
-        if value in {"en", "eng", "english"}:
+        if (
+            value in {"en", "eng", "english"}
+            or "english" in value
+            or "\u0627\u0646\u062c\u0644\u064a\u0632" in value
+            or "\u0625\u0646\u062c\u0644\u064a\u0632" in value
+        ):
             return "en"
-        if value in {"ar", "ara", "arabic"}:
+        if value in {"ar", "ara", "arabic"} or "arabic" in value or "\u0639\u0631\u0628" in value:
             return "ar"
         raise ValueError("language must be 'en' or 'ar'")
 
